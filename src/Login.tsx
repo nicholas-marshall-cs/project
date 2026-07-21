@@ -23,23 +23,19 @@ export default function Login() {
     })
     setLoading(false)
 
-    if (error) {
-      setError(error.message)
-    } else {
-      setSent(true)
-    }
+    if (error) setError(error.message)
+    else setSent(true)
   }
 
   return (
     <div className="login-screen">
       <div className="login-card">
+        <div className="login-mark">P</div>
         <h1>Project Dashboard</h1>
         <p className="subtitle">Sign in with your {COMPANY_DOMAIN} email</p>
 
         {sent ? (
-          <p className="success">
-            Check your inbox — we sent a login link to <strong>{email}</strong>.
-          </p>
+          <p className="success">Check your inbox — we sent a login link to <strong>{email}</strong>.</p>
         ) : (
           <form onSubmit={handleSubmit}>
             <input
@@ -49,9 +45,7 @@ export default function Login() {
               onChange={(e) => setEmail(e.target.value)}
               required
             />
-            <button type="submit" disabled={loading}>
-              {loading ? 'Sending…' : 'Send login link'}
-            </button>
+            <button type="submit" disabled={loading}>{loading ? 'Sending…' : 'Send login link'}</button>
             {error && <p className="error">{error}</p>}
           </form>
         )}
