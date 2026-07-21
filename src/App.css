@@ -243,3 +243,56 @@ th { color: var(--text-faint); font-weight: 600; font-size: 0.72rem; text-transf
 .users-row:last-child { border-bottom: none; }
 .users-row select { padding: 0.3rem 0.4rem; border-radius: 6px; border: 1px solid var(--border); font-size: 0.78rem; }
 .users-note { margin-top: 0.6rem; font-size: 0.78rem; }
+
+/* ---------- Freshness / at-risk indicators ---------- */
+.freshness-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 0.4rem; vertical-align: middle; }
+.freshness-dot.fresh { background: var(--green); }
+.freshness-dot.aging { background: var(--amber); }
+.freshness-dot.stale { background: var(--red); }
+.attention-icon { color: var(--amber); margin-left: 0.4rem; vertical-align: -2px; }
+.status-row.stale { background: var(--red-bg); }
+
+/* ---------- Health-based progress / status coloring ---------- */
+.progress-fill.low { background: var(--red); }
+.progress-fill.mid { background: var(--amber); }
+.progress-fill.high { background: var(--green); }
+
+.kanban-col-title.status-to-do { color: var(--text-faint); }
+.kanban-col-title.status-open { color: var(--accent-text); }
+.kanban-col-title.status-in-progress { color: var(--amber); }
+.kanban-col-title.status-done { color: var(--green); }
+.kanban-col:has(.status-open) { border-top: 3px solid var(--accent); }
+.kanban-col:has(.status-in-progress) { border-top: 3px solid var(--amber); }
+.kanban-col:has(.status-done) { border-top: 3px solid var(--green); }
+.kanban-col:has(.status-to-do) { border-top: 3px solid var(--border); }
+
+.golive-badge { font-size: 0.72rem; font-weight: 600; padding: 0.15rem 0.5rem; border-radius: 20px; white-space: nowrap; background: var(--bg); color: var(--text-muted); }
+.golive-badge.soon { background: var(--amber-bg); color: var(--amber); }
+.golive-badge.overdue { background: var(--red-bg); color: var(--red); }
+
+/* ---------- Customer type accent ---------- */
+.customer-card.type-poc { border-left: 3px solid var(--accent); }
+.customer-card.type-termed { border-left: 3px solid var(--amber); }
+.customer-card.type-established { border-left: 3px solid var(--green); }
+.customer-card.type-none { border-left: 3px solid transparent; }
+
+/* ---------- Dark mode ---------- */
+.sidebar-theme-toggle { display: flex; align-items: center; gap: 0.5rem; font-size: 0.8rem; color: var(--text-muted); background: none; border: none; cursor: pointer; padding: 0.4rem 0.5rem; width: 100%; text-align: left; border-radius: var(--radius-sm); }
+.sidebar-theme-toggle:hover { background: var(--bg); color: var(--text); }
+
+:root.dark {
+  --bg: #14151a;
+  --surface: #1c1d24;
+  --border: #2c2d36;
+  --text: #e6e6ea;
+  --text-muted: #a3a4b0;
+  --text-faint: #74757f;
+  --accent-light: #2a2851;
+  --green-bg: #113023;
+  --red-bg: #341c1f;
+  --amber-bg: #3a2c10;
+  --shadow: 0 1px 2px rgba(0,0,0,0.35), 0 1px 3px rgba(0,0,0,0.3);
+}
+:root.dark .status-row.stale { background: rgba(220, 38, 38, 0.12); }
+:root.dark .badge.poc { background: var(--accent-light); }
+:root.dark .with-both { background: #2a1f3d; color: #d8b4fe; }

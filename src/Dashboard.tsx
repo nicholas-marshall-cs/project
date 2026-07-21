@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
-import { LayoutDashboard, Building2, CheckSquare, AlertTriangle, Activity, Clock, ChevronRight, ChevronDown, ClipboardCheck, Pencil, Trash2, ShieldCheck } from 'lucide-react'
+import { LayoutDashboard, Building2, CheckSquare, AlertTriangle, Activity, Clock, ChevronRight, ChevronDown, ClipboardCheck, Pencil, Trash2, ShieldCheck, AlertCircle, Sun, Moon } from 'lucide-react'
 import { supabase } from './supabaseClient'
 import type { Customer, Task, Blocker, UpdateRow, Spotlight, Milestone, StatusDraft, Role, AllowedUser } from './types'
 
@@ -47,6 +47,12 @@ export default function Dashboard({ session }: { session: Session }) {
 
   const canEdit = myRole === 'admin' || myRole === 'editor'
   const isAdmin = myRole === 'admin'
+
+  const [dark, setDark] = useState<boolean>(() => localStorage.getItem('pd-theme') === 'dark')
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', dark)
+    localStorage.setItem('pd-theme', dark ? 'dark' : 'light')
+  }, [dark])
 
   async function loadAll() {
     setLoading(true)
@@ -190,6 +196,40 @@ export default function Dashboard({ session }: { session: Session }) {
     return Math.round((done / STAGES.length) * 100)
   }
 
+  function daysSince(iso: string) {
+    return Math.floor((Date.now() - new Date(iso).getTime()) / 86400000)
+  }
+  function daysUntil(iso: string) {
+    return Math.ceil((new Date(iso).getTime() - Date.now()) / 86400000)
+  }
+  function latestSpotlightFor(customerId: string) {
+    return spotlight
+      .filter((s) => s.customer_id === customerId)
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0]
+  }
+  function freshness(customerId: string): 'fresh' | 'aging' | 'stale' {
+    const latest = latestSpotlightFor(customerId)
+    if (!latest) return 'stale'
+    const d = daysSince(latest.created_at)
+    if (d <= 2) return 'fresh'
+    if (d <= 5) return 'aging'
+    return 'stale'
+  }
+  function needsAttention(c: Customer): boolean {
+    const stale = freshness(c.id) === 'stale'
+    const hasOpenBlockers = blockers.some((b) => b.customer_id === c.id && !b.resolved_at)
+    const nearGoLive = c.go_live ? (() => { const d = daysUntil(c.go_live as string); return d >= 0 && d <= 7 && progress(c) < 100 })() : false
+    return stale || hasOpenBlockers || nearGoLive
+  }
+  function progressTier(pct: number) {
+    if (pct < 34) return 'low'
+    if (pct < 67) return 'mid'
+    return 'high'
+  }
+  function statusSlug(status: Task['status']) {
+    return status.toLowerCase().replace(/\s+/g, '-')
+  }
+
   const visibleNav = NAV.filter((n) => !n.adminOnly || isAdmin)
 
   return (
@@ -210,6 +250,9 @@ export default function Dashboard({ session }: { session: Session }) {
         </nav>
         <div className="sidebar-footer">
           <div className="sidebar-who">{session.user.email}{myRole && <span className={`role-tag role-${myRole}`}>{myRole}</span>}</div>
+          <button className="sidebar-theme-toggle" onClick={() => setDark((v) => !v)}>
+            {dark ? <Sun size={14} /> : <Moon size={14} />} {dark ? 'Light mode' : 'Dark mode'}
+          </button>
           <button className="sidebar-signout" onClick={() => supabase.auth.signOut()}>Sign out</button>
         </div>
       </aside>
@@ -250,12 +293,14 @@ export default function Dashboard({ session }: { session: Session }) {
                     <span>Customer</span><span>With</span><span>Current status</span><span>Updated</span>
                   </div>
                   {customers.map((c) => {
-                    const latest = spotlight
-                      .filter((s) => s.customer_id === c.id)
-                      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0]
+                    const latest = latestSpotlightFor(c.id)
                     return (
                       <div key={c.id} className="status-row" onClick={() => { setTab('customers'); setExpanded(c.id) }}>
-                        <span className="status-cust">{c.name}</span>
+                        <span className="status-cust">
+                          <span className={`freshness-dot ${freshness(c.id)}`} title={`Freshness: ${freshness(c.id)}`} />
+                          {c.name}
+                          {needsAttention(c) && <AlertCircle size={12} className="attention-icon" />}
+                        </span>
                         {latest ? (
                           <>
                             <span><WithBadge who={latest.owner} /></span>
@@ -279,7 +324,7 @@ export default function Dashboard({ session }: { session: Session }) {
                   {upcomingGoLive.length === 0 && <p className="muted">Nothing in the next 30 days.</p>}
                   {upcomingGoLive.map((c) => (
                     <div key={c.id} className="feed-card">
-                      <div className="feed-top"><span className="feed-cust">{c.name}</span><span>{c.go_live}</span></div>
+                      <div className="feed-top"><span className="feed-cust">{c.name}</span><GoLiveBadge date={c.go_live as string} /></div>
                       <div className="feed-text">{progress(c)}% of roadmap stages complete</div>
                     </div>
                   ))}
@@ -288,14 +333,14 @@ export default function Dashboard({ session }: { session: Session }) {
                 <div className="section-title">Customer progress</div>
                 <div className="customer-grid">
                   {customers.map((c) => (
-                    <div key={c.id} className="customer-card" onClick={() => { setTab('customers'); setExpanded(c.id) }}>
+                    <div key={c.id} className={`customer-card type-${c.type ?? 'none'}`} onClick={() => { setTab('customers'); setExpanded(c.id) }}>
                       <div className="customer-card-top">
-                        <h3>{c.name}</h3>
+                        <h3>{c.name}{needsAttention(c) && <AlertCircle size={13} className="attention-icon" />}</h3>
                         {c.type && <span className={`badge ${c.type}`}>{c.type}</span>}
                       </div>
                       <div className="customer-owner">{c.owner ?? 'Unassigned'}</div>
-                      <div className="progress-track"><div className="progress-fill" style={{ width: `${progress(c)}%` }} /></div>
-                      <div className="progress-label"><span>{progress(c)}% complete</span><span>{c.go_live ?? 'no go-live set'}</span></div>
+                      <div className="progress-track"><div className={`progress-fill ${progressTier(progress(c))}`} style={{ width: `${progress(c)}%` }} /></div>
+                      <div className="progress-label"><span>{progress(c)}% complete</span>{c.go_live ? <GoLiveBadge date={c.go_live} /> : <span>no go-live set</span>}</div>
                     </div>
                   ))}
                 </div>
@@ -348,9 +393,12 @@ export default function Dashboard({ session }: { session: Session }) {
                     const isOpen = expanded === c.id
                     const isEditing = editingId === c.id
                     return (
-                      <div key={c.id} className="customer-card" onClick={() => setExpanded(isOpen ? null : c.id)}>
+                      <div key={c.id} className={`customer-card type-${c.type ?? 'none'}`} onClick={() => setExpanded(isOpen ? null : c.id)}>
                         <div className="customer-card-top">
-                          <h3>{isOpen ? <ChevronDown size={14} style={{ verticalAlign: -2 }} /> : <ChevronRight size={14} style={{ verticalAlign: -2 }} />} {c.name}</h3>
+                          <h3>
+                            {isOpen ? <ChevronDown size={14} style={{ verticalAlign: -2 }} /> : <ChevronRight size={14} style={{ verticalAlign: -2 }} />} {c.name}
+                            {needsAttention(c) && <span title="Needs attention"><AlertCircle size={13} className="attention-icon" /></span>}
+                          </h3>
                           <div className="card-top-actions" onClick={(e) => e.stopPropagation()}>
                             {c.type && <span className={`badge ${c.type}`}>{c.type}</span>}
                             {canEdit && isOpen && (
@@ -366,8 +414,8 @@ export default function Dashboard({ session }: { session: Session }) {
                           </div>
                         </div>
                         <div className="customer-owner">{c.owner ?? 'Unassigned'}</div>
-                        <div className="progress-track"><div className="progress-fill" style={{ width: `${progress(c)}%` }} /></div>
-                        <div className="progress-label"><span>{progress(c)}% complete</span><span>{c.go_live ?? '—'}</span></div>
+                        <div className="progress-track"><div className={`progress-fill ${progressTier(progress(c))}`} style={{ width: `${progress(c)}%` }} /></div>
+                        <div className="progress-label"><span>{progress(c)}% complete</span>{c.go_live ? <GoLiveBadge date={c.go_live} /> : <span>—</span>}</div>
 
                         {isOpen && (
                           <div className="customer-expand" onClick={(e) => e.stopPropagation()}>
@@ -426,7 +474,7 @@ export default function Dashboard({ session }: { session: Session }) {
                             )}
 
                             <div className="milestones">
-                              <h4>Status</h4>
+                              <h4>Status <span className={`freshness-dot ${freshness(c.id)}`} title={`Freshness: ${freshness(c.id)}`} /></h4>
                               {spotlight
                                 .filter((s) => s.customer_id === c.id)
                                 .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
@@ -460,7 +508,7 @@ export default function Dashboard({ session }: { session: Session }) {
                     const col = filteredTasks.filter((t) => t.status === status)
                     return (
                       <div key={status} className="kanban-col">
-                        <div className="kanban-col-title"><span>{status}</span><span>{col.length}</span></div>
+                        <div className={`kanban-col-title status-${statusSlug(status)}`}><span>{status}</span><span>{col.length}</span></div>
                         {col.map((t) => (
                           <div key={t.id} className="task-card">
                             <div className="cust">{customerName(t.customer_id)}</div>
@@ -553,6 +601,16 @@ export default function Dashboard({ session }: { session: Session }) {
       </main>
     </div>
   )
+}
+
+function GoLiveBadge({ date }: { date: string }) {
+  const days = Math.ceil((new Date(date).getTime() - Date.now()) / 86400000)
+  let urgency = 'later'
+  let label = date
+  if (days < 0) { urgency = 'overdue'; label = `${date} · ${Math.abs(days)}d ago` }
+  else if (days === 0) { urgency = 'soon'; label = `${date} · today` }
+  else if (days <= 7) { urgency = 'soon'; label = `${date} · in ${days}d` }
+  return <span className={`golive-badge ${urgency}`}>{label}</span>
 }
 
 function WithBadge({ who }: { who: string | null }) {
