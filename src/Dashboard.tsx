@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
-import { LayoutDashboard, Building2, CheckSquare, AlertTriangle, Activity, Clock, ChevronRight, ChevronDown, ClipboardCheck } from 'lucide-react'
+import { LayoutDashboard, Building2, CheckSquare, AlertTriangle, Activity, Clock, ChevronRight, ChevronDown, ClipboardCheck, Pencil, Trash2, ShieldCheck } from 'lucide-react'
 import { supabase } from './supabaseClient'
-import type { Customer, Task, Blocker, UpdateRow, Spotlight, Milestone, StatusDraft } from './types'
+import type { Customer, Task, Blocker, UpdateRow, Spotlight, Milestone, StatusDraft, Role, AllowedUser } from './types'
 
-type Tab = 'overview' | 'review' | 'customers' | 'tasks' | 'blockers' | 'status' | 'updates'
+type Tab = 'overview' | 'review' | 'customers' | 'tasks' | 'blockers' | 'status' | 'updates' | 'users'
 
 const STAGES: { key: keyof Customer; label: string }[] = [
   { key: 'demo', label: 'Demo' },
@@ -18,7 +18,7 @@ const STAGES: { key: keyof Customer; label: string }[] = [
   { key: 'mo_conclusion', label: 'MO conclusion' },
 ]
 
-const NAV: { key: Tab; label: string; icon: typeof LayoutDashboard }[] = [
+const NAV: { key: Tab; label: string; icon: typeof LayoutDashboard; adminOnly?: boolean }[] = [
   { key: 'overview', label: 'Overview', icon: LayoutDashboard },
   { key: 'review', label: 'Review', icon: ClipboardCheck },
   { key: 'customers', label: 'Customers', icon: Building2 },
@@ -26,6 +26,7 @@ const NAV: { key: Tab; label: string; icon: typeof LayoutDashboard }[] = [
   { key: 'blockers', label: 'Blockers', icon: AlertTriangle },
   { key: 'status', label: 'Status', icon: Activity },
   { key: 'updates', label: 'Updates', icon: Clock },
+  { key: 'users', label: 'Users', icon: ShieldCheck, adminOnly: true },
 ]
 
 export default function Dashboard({ session }: { session: Session }) {
@@ -36,10 +37,16 @@ export default function Dashboard({ session }: { session: Session }) {
   const [updates, setUpdates] = useState<UpdateRow[]>([])
   const [spotlight, setSpotlight] = useState<Spotlight[]>([])
   const [statusDrafts, setStatusDrafts] = useState<StatusDraft[]>([])
+  const [allowedUsers, setAllowedUsers] = useState<AllowedUser[]>([])
+  const [myRole, setMyRole] = useState<Role | null>(null)
   const [customerFilter, setCustomerFilter] = useState<string>('all')
   const [expanded, setExpanded] = useState<string | null>(null)
+  const [editingId, setEditingId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
+
+  const canEdit = myRole === 'admin' || myRole === 'editor'
+  const isAdmin = myRole === 'admin'
 
   async function loadAll() {
     setLoading(true)
@@ -65,7 +72,18 @@ export default function Dashboard({ session }: { session: Session }) {
     setLoading(false)
   }
 
-  useEffect(() => { loadAll() }, [])
+  async function loadRole() {
+    const { data, error } = await supabase.rpc('my_role')
+    if (!error) setMyRole((data as Role) ?? 'viewer')
+  }
+
+  async function loadUsers() {
+    const { data, error } = await supabase.from('allowed_users').select('*').order('added_at')
+    if (!error) setAllowedUsers(data as AllowedUser[])
+  }
+
+  useEffect(() => { loadAll(); loadRole() }, [])
+  useEffect(() => { if (isAdmin) loadUsers() }, [isAdmin])
 
   function customerName(id: string) {
     return customers.find((c) => c.id === id)?.name ?? '—'
@@ -75,6 +93,15 @@ export default function Dashboard({ session }: { session: Session }) {
     if (!name.trim()) return
     const { error } = await supabase.from('customers').insert({ name: name.trim() })
     if (error) setErrorMsg(error.message); else loadAll()
+  }
+  async function updateCustomerField(customerId: string, field: string, value: string | null) {
+    const { error } = await supabase.from('customers').update({ [field]: value || null }).eq('id', customerId)
+    if (error) setErrorMsg(error.message); else loadAll()
+  }
+  async function deleteCustomer(customer: Customer) {
+    if (!window.confirm(`Permanently delete ${customer.name}? This also deletes all of their tasks, blockers, updates and status history. This cannot be undone.`)) return
+    const { error } = await supabase.from('customers').delete().eq('id', customer.id)
+    if (error) setErrorMsg(error.message); else { setExpanded(null); setEditingId(null); loadAll() }
   }
   async function addTask(customerId: string, title: string) {
     if (!title.trim() || !customerId) return
@@ -120,10 +147,25 @@ export default function Dashboard({ session }: { session: Session }) {
       .eq('id', draft.id)
     if (error) setErrorMsg(error.message); else loadAll()
   }
-  async function toggleMilestone(customer: Customer, key: string) {
-    const updated = customer.milestones.map((m) => (m.key === key ? { ...m, completed: !m.completed } : m))
+  async function updateMilestone(customer: Customer, key: string, patch: Partial<Milestone>) {
+    const updated = customer.milestones.map((m) => (m.key === key ? { ...m, ...patch } : m))
     const { error } = await supabase.from('customers').update({ milestones: updated }).eq('id', customer.id)
     if (error) setErrorMsg(error.message); else loadAll()
+  }
+  async function addAllowedUser(email: string, role: Role) {
+    if (!email.trim()) return
+    const { error } = await supabase.from('allowed_users').insert({ email: email.trim().toLowerCase(), role })
+    if (error) setErrorMsg(error.message); else loadUsers()
+  }
+  async function updateUserRole(email: string, role: Role) {
+    const { error } = await supabase.from('allowed_users').update({ role }).eq('email', email)
+    if (error) setErrorMsg(error.message); else loadUsers()
+  }
+  async function removeAllowedUser(email: string) {
+    if (email === session.user.email) { setErrorMsg("You can't remove your own access."); return }
+    if (!window.confirm(`Remove access for ${email}? They will be signed out and blocked from logging in again.`)) return
+    const { error } = await supabase.from('allowed_users').delete().eq('email', email)
+    if (error) setErrorMsg(error.message); else loadUsers()
   }
 
   const filteredTasks = tasks.filter((t) => customerFilter === 'all' || t.customer_id === customerFilter)
@@ -148,6 +190,8 @@ export default function Dashboard({ session }: { session: Session }) {
     return Math.round((done / STAGES.length) * 100)
   }
 
+  const visibleNav = NAV.filter((n) => !n.adminOnly || isAdmin)
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -156,7 +200,7 @@ export default function Dashboard({ session }: { session: Session }) {
           <span>Project Dashboard</span>
         </div>
         <nav className="sidebar-nav">
-          {NAV.map(({ key, label, icon: Icon }) => (
+          {visibleNav.map(({ key, label, icon: Icon }) => (
             <button key={key} className={tab === key ? 'sidebar-link active' : 'sidebar-link'} onClick={() => setTab(key)}>
               <Icon size={16} />
               {label}
@@ -165,7 +209,7 @@ export default function Dashboard({ session }: { session: Session }) {
           ))}
         </nav>
         <div className="sidebar-footer">
-          <div className="sidebar-who">{session.user.email}</div>
+          <div className="sidebar-who">{session.user.email}{myRole && <span className={`role-tag role-${myRole}`}>{myRole}</span>}</div>
           <button className="sidebar-signout" onClick={() => supabase.auth.signOut()}>Sign out</button>
         </div>
       </aside>
@@ -176,7 +220,7 @@ export default function Dashboard({ session }: { session: Session }) {
             <h1>{NAV.find((n) => n.key === tab)?.label}</h1>
             <p className="page-sub">{customers.length} customers tracked</p>
           </div>
-          {tab !== 'overview' && tab !== 'customers' && (
+          {tab !== 'overview' && tab !== 'customers' && tab !== 'users' && (
             <select className="customer-filter" value={customerFilter} onChange={(e) => setCustomerFilter(e.target.value)}>
               <option value="all">All customers</option>
               {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -185,6 +229,7 @@ export default function Dashboard({ session }: { session: Session }) {
         </div>
 
         {errorMsg && <div className="banner error-banner">{errorMsg}</div>}
+        {myRole === 'viewer' && <div className="banner viewer-banner">You have view-only access. Ask an admin if you need editing rights.</div>}
 
         {loading ? (
           <p className="muted">Loading…</p>
@@ -268,6 +313,7 @@ export default function Dashboard({ session }: { session: Session }) {
                         key={d.id}
                         draft={d}
                         customerName={customerName(d.customer_id)}
+                        canEdit={canEdit}
                         onApprove={approveDraft}
                         onDismiss={dismissDraft}
                       />
@@ -296,15 +342,28 @@ export default function Dashboard({ session }: { session: Session }) {
 
             {tab === 'customers' && (
               <>
-                <AddCustomerRow onAdd={addCustomer} />
+                {canEdit && <AddCustomerRow onAdd={addCustomer} />}
                 <div className="customer-grid">
                   {customers.map((c) => {
                     const isOpen = expanded === c.id
+                    const isEditing = editingId === c.id
                     return (
                       <div key={c.id} className="customer-card" onClick={() => setExpanded(isOpen ? null : c.id)}>
                         <div className="customer-card-top">
                           <h3>{isOpen ? <ChevronDown size={14} style={{ verticalAlign: -2 }} /> : <ChevronRight size={14} style={{ verticalAlign: -2 }} />} {c.name}</h3>
-                          {c.type && <span className={`badge ${c.type}`}>{c.type}</span>}
+                          <div className="card-top-actions" onClick={(e) => e.stopPropagation()}>
+                            {c.type && <span className={`badge ${c.type}`}>{c.type}</span>}
+                            {canEdit && isOpen && (
+                              <button className="icon-btn" title="Edit customer" onClick={() => setEditingId(isEditing ? null : c.id)}>
+                                <Pencil size={13} />
+                              </button>
+                            )}
+                            {isAdmin && isOpen && (
+                              <button className="icon-btn danger" title="Delete customer" onClick={() => deleteCustomer(c)}>
+                                <Trash2 size={13} />
+                              </button>
+                            )}
+                          </div>
                         </div>
                         <div className="customer-owner">{c.owner ?? 'Unassigned'}</div>
                         <div className="progress-track"><div className="progress-fill" style={{ width: `${progress(c)}%` }} /></div>
@@ -312,12 +371,30 @@ export default function Dashboard({ session }: { session: Session }) {
 
                         {isOpen && (
                           <div className="customer-expand" onClick={(e) => e.stopPropagation()}>
-                            {c.notes && <p className="notes">{c.notes}</p>}
+                            {isEditing ? (
+                              <EditCustomerForm
+                                customer={c}
+                                onSave={(field, value) => updateCustomerField(c.id, field, value)}
+                                onClose={() => setEditingId(null)}
+                              />
+                            ) : (
+                              c.notes && <p className="notes">{c.notes}</p>
+                            )}
+
                             <div className="stage-grid">
                               {STAGES.map((s) => (
                                 <div key={String(s.key)} className={c[s.key] ? 'stage done' : 'stage'}>
                                   <span className="stage-label">{s.label}</span>
-                                  <span className="stage-date">{(c[s.key] as string) || '—'}</span>
+                                  {canEdit ? (
+                                    <input
+                                      type="date"
+                                      className="stage-date-input"
+                                      value={(c[s.key] as string) || ''}
+                                      onChange={(e) => updateCustomerField(c.id, String(s.key), e.target.value)}
+                                    />
+                                  ) : (
+                                    <span className="stage-date">{(c[s.key] as string) || '—'}</span>
+                                  )}
                                 </div>
                               ))}
                             </div>
@@ -325,11 +402,25 @@ export default function Dashboard({ session }: { session: Session }) {
                               <div className="milestones">
                                 <h4>Milestones</h4>
                                 {c.milestones.map((m: Milestone) => (
-                                  <label key={m.key} className="milestone-row">
-                                    <input type="checkbox" checked={m.completed} onChange={() => toggleMilestone(c, m.key)} />
+                                  <div key={m.key} className="milestone-row">
+                                    <input
+                                      type="checkbox"
+                                      checked={m.completed}
+                                      disabled={!canEdit}
+                                      onChange={() => updateMilestone(c, m.key, { completed: !m.completed })}
+                                    />
                                     <span className={m.completed ? 'done' : ''}>{m.label}</span>
-                                    {m.date && <span className="muted"> — {m.date}</span>}
-                                  </label>
+                                    {canEdit ? (
+                                      <input
+                                        type="date"
+                                        className="milestone-date-input"
+                                        value={m.date || ''}
+                                        onChange={(e) => updateMilestone(c, m.key, { date: e.target.value })}
+                                      />
+                                    ) : (
+                                      m.date && <span className="muted"> — {m.date}</span>
+                                    )}
+                                  </div>
                                 ))}
                               </div>
                             )}
@@ -350,7 +441,7 @@ export default function Dashboard({ session }: { session: Session }) {
                               {spotlight.filter((s) => s.customer_id === c.id).length === 0 && (
                                 <p className="muted">No status logged yet.</p>
                               )}
-                              <CustomerStatusForm customerId={c.id} onAdd={addSpotlight} />
+                              {canEdit && <CustomerStatusForm customerId={c.id} onAdd={addSpotlight} />}
                             </div>
                           </div>
                         )}
@@ -363,7 +454,7 @@ export default function Dashboard({ session }: { session: Session }) {
 
             {tab === 'tasks' && (
               <>
-                <AddRow customers={customers} onAdd={addTask} placeholder="New task title" />
+                {canEdit && <AddRow customers={customers} onAdd={addTask} placeholder="New task title" />}
                 <div className="kanban">
                   {(['To Do', 'Open', 'In Progress', 'Done'] as Task['status'][]).map((status) => {
                     const col = filteredTasks.filter((t) => t.status === status)
@@ -374,7 +465,7 @@ export default function Dashboard({ session }: { session: Session }) {
                           <div key={t.id} className="task-card">
                             <div className="cust">{customerName(t.customer_id)}</div>
                             <div className="title">{t.title}</div>
-                            <select value={t.status} onChange={(e) => setTaskStatus(t.id, e.target.value as Task['status'])}>
+                            <select value={t.status} disabled={!canEdit} onChange={(e) => setTaskStatus(t.id, e.target.value as Task['status'])}>
                               <option value="To Do">To Do</option>
                               <option value="Open">Open</option>
                               <option value="In Progress">In Progress</option>
@@ -392,7 +483,7 @@ export default function Dashboard({ session }: { session: Session }) {
 
             {tab === 'blockers' && (
               <>
-                <AddRow customers={customers} onAdd={addBlocker} placeholder="New blocker title" />
+                {canEdit && <AddRow customers={customers} onAdd={addBlocker} placeholder="New blocker title" />}
                 <div className="list">
                   {filteredBlockers.map((b) => (
                     <div key={b.id} className={b.resolved_at ? 'blocker-card resolved' : 'blocker-card'}>
@@ -401,7 +492,11 @@ export default function Dashboard({ session }: { session: Session }) {
                           <div className="blocker-cust">{customerName(b.customer_id)}{b.type ? ` · ${b.type}` : ''}</div>
                           <div className="blocker-title">{b.title}</div>
                         </div>
-                        <button className={b.resolved_at ? 'pill resolved' : 'pill open'} onClick={() => toggleBlockerResolved(b)}>
+                        <button
+                          className={b.resolved_at ? 'pill resolved' : 'pill open'}
+                          disabled={!canEdit}
+                          onClick={() => toggleBlockerResolved(b)}
+                        >
                           {b.resolved_at ? 'Resolved' : 'Open'}
                         </button>
                       </div>
@@ -416,7 +511,7 @@ export default function Dashboard({ session }: { session: Session }) {
 
             {tab === 'status' && (
               <>
-                <AddStatusRow customers={customers} onAdd={addSpotlight} />
+                {canEdit && <AddStatusRow customers={customers} onAdd={addSpotlight} />}
                 <div className="list">
                   {filteredSpotlight.map((s) => (
                     <div key={s.id} className="feed-card">
@@ -431,7 +526,7 @@ export default function Dashboard({ session }: { session: Session }) {
 
             {tab === 'updates' && (
               <>
-                <AddRow customers={customers} onAdd={addUpdateNote} placeholder="New update note" textarea />
+                {canEdit && <AddRow customers={customers} onAdd={addUpdateNote} placeholder="New update note" textarea />}
                 <div className="list">
                   {filteredUpdates.map((u) => (
                     <div key={u.id} className={u.is_system ? 'feed-card system' : 'feed-card'}>
@@ -442,6 +537,16 @@ export default function Dashboard({ session }: { session: Session }) {
                   {filteredUpdates.length === 0 && <p className="muted">No updates logged yet.</p>}
                 </div>
               </>
+            )}
+
+            {tab === 'users' && isAdmin && (
+              <UsersTab
+                users={allowedUsers}
+                myEmail={session.user.email ?? ''}
+                onAdd={addAllowedUser}
+                onRoleChange={updateUserRole}
+                onRemove={removeAllowedUser}
+              />
             )}
           </>
         )}
@@ -517,11 +622,13 @@ function CustomerStatusForm({ customerId, onAdd }: { customerId: string; onAdd: 
 function DraftCard({
   draft,
   customerName,
+  canEdit,
   onApprove,
   onDismiss,
 }: {
   draft: StatusDraft
   customerName: string
+  canEdit: boolean
   onApprove: (draft: StatusDraft, text: string, owner: string) => void
   onDismiss: (draft: StatusDraft) => void
 }) {
@@ -536,17 +643,19 @@ function DraftCard({
       </div>
       {draft.source_summary && <div className="draft-source muted">{draft.source_summary}</div>}
       <div className="draft-edit-row">
-        <select value={owner} onChange={(e) => setOwner(e.target.value as StatusDraft['proposed_owner'])}>
+        <select value={owner} disabled={!canEdit} onChange={(e) => setOwner(e.target.value as StatusDraft['proposed_owner'])}>
           <option value="Us">With us</option>
           <option value="Customer">With customer</option>
           <option value="Both">Both</option>
         </select>
-        <textarea value={text} onChange={(e) => setText(e.target.value)} />
+        <textarea value={text} disabled={!canEdit} onChange={(e) => setText(e.target.value)} />
       </div>
-      <div className="draft-actions">
-        <button className="approve-btn" onClick={() => onApprove(draft, text, owner)}>Approve</button>
-        <button className="dismiss-btn" onClick={() => onDismiss(draft)}>Dismiss</button>
-      </div>
+      {canEdit && (
+        <div className="draft-actions">
+          <button className="approve-btn" onClick={() => onApprove(draft, text, owner)}>Approve</button>
+          <button className="dismiss-btn" onClick={() => onDismiss(draft)}>Dismiss</button>
+        </div>
+      )}
     </div>
   )
 }
@@ -587,5 +696,115 @@ function AddCustomerRow({ onAdd }: { onAdd: (name: string) => void }) {
       <input value={name} onChange={(e) => setName(e.target.value)} placeholder="New customer name" required />
       <button type="submit">Add</button>
     </form>
+  )
+}
+
+function EditCustomerForm({
+  customer,
+  onSave,
+  onClose,
+}: {
+  customer: Customer
+  onSave: (field: string, value: string | null) => void
+  onClose: () => void
+}) {
+  const [name, setName] = useState(customer.name)
+  const [owner, setOwner] = useState(customer.owner ?? '')
+  const [type, setType] = useState(customer.type ?? '')
+  const [jiraEpicKey, setJiraEpicKey] = useState(customer.jira_epic_key ?? '')
+  const [notes, setNotes] = useState(customer.notes ?? '')
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault()
+    if (name.trim() && name.trim() !== customer.name) onSave('name', name.trim())
+    if (owner !== (customer.owner ?? '')) onSave('owner', owner)
+    if (type !== (customer.type ?? '')) onSave('type', type)
+    if (jiraEpicKey !== (customer.jira_epic_key ?? '')) onSave('jira_epic_key', jiraEpicKey)
+    if (notes !== (customer.notes ?? '')) onSave('notes', notes)
+    onClose()
+  }
+
+  return (
+    <form className="edit-customer-form" onSubmit={submit}>
+      <div className="edit-grid">
+        <label>Name<input value={name} onChange={(e) => setName(e.target.value)} required /></label>
+        <label>Owner<input value={owner} onChange={(e) => setOwner(e.target.value)} /></label>
+        <label>Type
+          <select value={type} onChange={(e) => setType(e.target.value)}>
+            <option value="">—</option>
+            <option value="poc">POC</option>
+            <option value="termed">Termed</option>
+            <option value="established">Established</option>
+          </select>
+        </label>
+        <label>Jira epic key<input value={jiraEpicKey} onChange={(e) => setJiraEpicKey(e.target.value)} placeholder="e.g. PROJ-809" /></label>
+      </div>
+      <label className="edit-notes">Notes
+        <textarea value={notes} onChange={(e) => setNotes(e.target.value)} />
+      </label>
+      <div className="draft-actions">
+        <button className="approve-btn" type="submit">Save</button>
+        <button className="dismiss-btn" type="button" onClick={onClose}>Cancel</button>
+      </div>
+    </form>
+  )
+}
+
+function UsersTab({
+  users,
+  myEmail,
+  onAdd,
+  onRoleChange,
+  onRemove,
+}: {
+  users: AllowedUser[]
+  myEmail: string
+  onAdd: (email: string, role: Role) => void
+  onRoleChange: (email: string, role: Role) => void
+  onRemove: (email: string) => void
+}) {
+  const [email, setEmail] = useState('')
+  const [role, setRole] = useState<Role>('viewer')
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault()
+    onAdd(email, role)
+    setEmail('')
+    setRole('viewer')
+  }
+
+  return (
+    <>
+      <form className="add-row" onSubmit={submit}>
+        <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="person@company.com" required />
+        <select value={role} onChange={(e) => setRole(e.target.value as Role)}>
+          <option value="viewer">Viewer — view only</option>
+          <option value="editor">Editor — can add/edit, no delete</option>
+          <option value="admin">Admin — full control</option>
+        </select>
+        <button type="submit">Grant access</button>
+      </form>
+
+      <div className="users-table">
+        <div className="users-head">
+          <span>Email</span><span>Role</span><span>Added</span><span></span>
+        </div>
+        {users.map((u) => (
+          <div key={u.email} className="users-row">
+            <span>{u.email}{u.email === myEmail && <span className="muted"> (you)</span>}</span>
+            <select value={u.role} onChange={(e) => onRoleChange(u.email, e.target.value as Role)}>
+              <option value="viewer">Viewer</option>
+              <option value="editor">Editor</option>
+              <option value="admin">Admin</option>
+            </select>
+            <span className="muted">{new Date(u.added_at).toLocaleDateString()}</span>
+            <button className="icon-btn danger" disabled={u.email === myEmail} title="Remove access" onClick={() => onRemove(u.email)}>
+              <Trash2 size={13} />
+            </button>
+          </div>
+        ))}
+      </div>
+      <p className="muted users-note">Removing access blocks that email from signing in at all (enforced at login, not just data visibility).</p>
+    </>
   )
 }

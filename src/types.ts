@@ -11,6 +11,8 @@ export interface Customer {
   owner: string | null
   type: string | null
   notes: string | null
+  legacy_id: string | null
+  jira_epic_key: string | null
   demo: string | null
   agreement: string | null
   handover: string | null
@@ -71,4 +73,12 @@ export interface StatusDraft {
   created_at: string
   reviewed_at: string | null
   reviewed_by: string | null
+}
+
+export type Role = 'admin' | 'editor' | 'viewer'
+
+export interface AllowedUser {
+  email: string
+  role: Role
+  added_at: string
 }
