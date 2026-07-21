@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
-import { LayoutDashboard, Building2, CheckSquare, AlertTriangle, Star, Clock, ChevronRight, ChevronDown } from 'lucide-react'
+import { LayoutDashboard, Building2, CheckSquare, AlertTriangle, Activity, Clock, ChevronRight, ChevronDown } from 'lucide-react'
 import { supabase } from './supabaseClient'
 import type { Customer, Task, Blocker, UpdateRow, Spotlight, Milestone } from './types'
 
-type Tab = 'overview' | 'customers' | 'tasks' | 'blockers' | 'spotlight' | 'updates'
+type Tab = 'overview' | 'customers' | 'tasks' | 'blockers' | 'status' | 'updates'
 
 const STAGES: { key: keyof Customer; label: string }[] = [
   { key: 'demo', label: 'Demo' },
@@ -23,7 +23,7 @@ const NAV: { key: Tab; label: string; icon: typeof LayoutDashboard }[] = [
   { key: 'customers', label: 'Customers', icon: Building2 },
   { key: 'tasks', label: 'Tasks', icon: CheckSquare },
   { key: 'blockers', label: 'Blockers', icon: AlertTriangle },
-  { key: 'spotlight', label: 'Spotlight', icon: Star },
+  { key: 'status', label: 'Status', icon: Activity },
   { key: 'updates', label: 'Updates', icon: Clock },
 ]
 
@@ -274,6 +274,25 @@ export default function Dashboard({ session }: { session: Session }) {
                                 ))}
                               </div>
                             )}
+
+                            <div className="milestones">
+                              <h4>Status</h4>
+                              {spotlight
+                                .filter((s) => s.customer_id === c.id)
+                                .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+                                .slice(0, 5)
+                                .map((s) => (
+                                  <div key={s.id} className="status-history-row">
+                                    <WithBadge who={s.owner} />
+                                    <span className="status-history-text">{s.text}</span>
+                                    <span className="muted">{timeAgo(s.created_at)}</span>
+                                  </div>
+                                ))}
+                              {spotlight.filter((s) => s.customer_id === c.id).length === 0 && (
+                                <p className="muted">No status logged yet.</p>
+                              )}
+                              <CustomerStatusForm customerId={c.id} onAdd={addSpotlight} />
+                            </div>
                           </div>
                         )}
                       </div>
@@ -336,7 +355,7 @@ export default function Dashboard({ session }: { session: Session }) {
               </>
             )}
 
-            {tab === 'spotlight' && (
+            {tab === 'status' && (
               <>
                 <AddStatusRow customers={customers} onAdd={addSpotlight} />
                 <div className="list">
@@ -411,6 +430,27 @@ function AddStatusRow({ customers, onAdd }: { customers: Customer[]; onAdd: (cus
       </select>
       <textarea value={text} onChange={(e) => setText(e.target.value)} placeholder="Current status / requirement" required />
       <button type="submit">Update status</button>
+    </form>
+  )
+}
+
+function CustomerStatusForm({ customerId, onAdd }: { customerId: string; onAdd: (customerId: string, who: string, text: string) => void }) {
+  const [who, setWho] = useState('Both')
+  const [text, setText] = useState('')
+  function submit(e: React.FormEvent) {
+    e.preventDefault()
+    onAdd(customerId, who, text)
+    setText('')
+  }
+  return (
+    <form className="add-row inline-status-form" onSubmit={submit}>
+      <select value={who} onChange={(e) => setWho(e.target.value)}>
+        <option value="Us">With us</option>
+        <option value="Customer">With customer</option>
+        <option value="Both">Both</option>
+      </select>
+      <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Log a status update…" required />
+      <button type="submit">Update</button>
     </form>
   )
 }
