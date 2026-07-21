@@ -111,11 +111,20 @@ body {
 .progress-label { font-size: 0.74rem; color: var(--text-muted); display: flex; justify-content: space-between; }
 .customer-expand { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
 .notes { margin: 0 0 0.85rem; color: #444; font-size: 0.83rem; white-space: pre-wrap; line-height: 1.5; }
-.stage-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 0.5rem; margin-bottom: 0.85rem; }
-.stage { padding: 0.4rem 0.55rem; border-radius: var(--radius-sm); background: var(--bg); font-size: 0.74rem; }
+.stage-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 0.5rem; margin-bottom: 0.5rem; }
+.stage { padding: 0.4rem 0.55rem; border-radius: var(--radius-sm); background: var(--bg); font-size: 0.74rem; border: 1px solid transparent; }
+.stage.empty { border-color: var(--border); }
+.stage.scheduled { background: var(--accent-light); }
 .stage.done { background: var(--green-bg); }
 .stage-label { display: block; color: var(--text-muted); font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.02em; }
 .stage-date { display: block; font-weight: 600; margin-top: 0.1rem; font-size: 0.78rem; }
+.stage-tag { display: block; font-size: 0.6rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--accent-text); margin-top: 0.2rem; }
+.stage-legend { display: flex; gap: 1rem; font-size: 0.7rem; color: var(--text-faint); margin-bottom: 0.9rem; }
+.stage-legend span { display: inline-flex; align-items: center; gap: 0.3rem; }
+.legend-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; }
+.legend-dot.empty { background: var(--border); }
+.legend-dot.scheduled { background: var(--accent); }
+.legend-dot.done { background: var(--green); }
 .milestones h4 { margin: 0 0 0.45rem; font-size: 0.8rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.02em; }
 .milestone-row { display: flex; align-items: center; gap: 0.45rem; font-size: 0.83rem; padding: 0.22rem 0; }
 .milestone-row .done { text-decoration: line-through; color: var(--text-faint); }
@@ -267,8 +276,9 @@ th { color: var(--text-faint); font-weight: 600; font-size: 0.72rem; text-transf
 .kanban-col:has(.status-to-do) { border-top: 3px solid var(--border); }
 
 .golive-badge { font-size: 0.72rem; font-weight: 600; padding: 0.15rem 0.5rem; border-radius: 20px; white-space: nowrap; background: var(--bg); color: var(--text-muted); }
+.golive-badge.upcoming { background: var(--bg); color: var(--text-muted); }
 .golive-badge.soon { background: var(--amber-bg); color: var(--amber); }
-.golive-badge.overdue { background: var(--red-bg); color: var(--red); }
+.golive-badge.past { background: var(--green-bg); color: var(--green); }
 
 /* ---------- Customer type accent ---------- */
 .customer-card.type-poc { border-left: 3px solid var(--accent); }

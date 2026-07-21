@@ -198,8 +198,20 @@ export default function Dashboard({ session }: { session: Session }) {
     })
     .sort((a, b) => new Date(a.go_live as string).getTime() - new Date(b.go_live as string).getTime())
 
+  function isPastOrToday(dateStr: string) {
+    const d = new Date(dateStr + 'T00:00:00')
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    return d.getTime() <= today.getTime()
+  }
+  function stageState(dateStr: string | null): 'empty' | 'scheduled' | 'done' {
+    if (!dateStr) return 'empty'
+    return isPastOrToday(dateStr) ? 'done' : 'scheduled'
+  }
   function progress(c: Customer) {
-    const done = STAGES.filter((s) => c[s.key]).length
+    // Only count a stage as complete once its date has actually occurred —
+    // a future-dated (planned) stage isn't "done" yet, just scheduled.
+    const done = STAGES.filter((s) => stageState(c[s.key] as string | null) === 'done').length
     return Math.round((done / STAGES.length) * 100)
   }
 
@@ -437,20 +449,30 @@ export default function Dashboard({ session }: { session: Session }) {
                             )}
 
                             <div className="stage-grid">
-                              {STAGES.map((s) => (
-                                <div key={String(s.key)} className={c[s.key] ? 'stage done' : 'stage'}>
-                                  <span className="stage-label">{s.label}</span>
-                                  {canEdit ? (
-                                    <DateField
-                                      className="stage-date-input"
-                                      value={(c[s.key] as string) || ''}
-                                      onCommit={(v) => updateCustomerField(c.id, String(s.key), v)}
-                                    />
-                                  ) : (
-                                    <span className="stage-date">{(c[s.key] as string) || '—'}</span>
-                                  )}
-                                </div>
-                              ))}
+                              {STAGES.map((s) => {
+                                const val = (c[s.key] as string) || ''
+                                const state = stageState(val || null)
+                                return (
+                                  <div key={String(s.key)} className={`stage ${state}`}>
+                                    <span className="stage-label">{s.label}</span>
+                                    {canEdit ? (
+                                      <DateField
+                                        className="stage-date-input"
+                                        value={val}
+                                        onCommit={(v) => updateCustomerField(c.id, String(s.key), v)}
+                                      />
+                                    ) : (
+                                      <span className="stage-date">{val || '—'}</span>
+                                    )}
+                                    {state === 'scheduled' && <span className="stage-tag">Scheduled</span>}
+                                  </div>
+                                )
+                              })}
+                            </div>
+                            <div className="stage-legend">
+                              <span><span className="legend-dot empty" /> Not started</span>
+                              <span><span className="legend-dot scheduled" /> Scheduled</span>
+                              <span><span className="legend-dot done" /> Done</span>
                             </div>
                             {c.milestones.length > 0 && (
                               <div className="milestones">
@@ -629,13 +651,14 @@ function DateField({ value, onCommit, className }: { value: string; onCommit: (v
 }
 
 function GoLiveBadge({ date }: { date: string }) {
-  const days = Math.ceil((new Date(date).getTime() - Date.now()) / 86400000)
-  let urgency = 'later'
-  let label = date
-  if (days < 0) { urgency = 'overdue'; label = `${date} · ${Math.abs(days)}d ago` }
-  else if (days === 0) { urgency = 'soon'; label = `${date} · today` }
-  else if (days <= 7) { urgency = 'soon'; label = `${date} · in ${days}d` }
-  return <span className={`golive-badge ${urgency}`}>{label}</span>
+  const days = Math.ceil((new Date(date + 'T00:00:00').getTime() - new Date(new Date().setHours(0, 0, 0, 0)).getTime()) / 86400000)
+
+  // A go-live date in the past just means it already happened — that's a fact worth
+  // showing calmly, not a missed deadline. Only the imminent future window carries urgency.
+  if (days < 0) return <span className="golive-badge past">Live since {date}</span>
+  if (days === 0) return <span className="golive-badge soon">Go-live today</span>
+  if (days <= 7) return <span className="golive-badge soon">Go-live in {days}d</span>
+  return <span className="golive-badge upcoming">Go-live {date}</span>
 }
 
 function WithBadge({ who }: { who: string | null }) {
