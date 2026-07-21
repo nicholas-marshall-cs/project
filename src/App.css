@@ -161,3 +161,30 @@ body {
 table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--border); font-size: 0.85rem; }
 th { color: var(--text-faint); font-weight: 600; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.03em; }
+
+/* ---------- Status live-feed (overview) ---------- */
+.status-table { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; margin-bottom: 1.75rem; }
+.status-head, .status-row {
+  display: grid;
+  grid-template-columns: 140px 90px 1fr 80px;
+  gap: 0.75rem;
+  align-items: center;
+  padding: 0.6rem 0.9rem;
+}
+.status-head { font-size: 0.7rem; font-weight: 700; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.03em; border-bottom: 1px solid var(--border); }
+.status-row { border-bottom: 1px solid var(--border); cursor: pointer; font-size: 0.83rem; }
+.status-row:last-child { border-bottom: none; }
+.status-row:hover { background: var(--bg); }
+.status-cust { font-weight: 600; }
+.status-text { color: var(--text); line-height: 1.4; white-space: pre-wrap; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+
+.with-badge { font-size: 0.68rem; font-weight: 700; padding: 0.18rem 0.5rem; border-radius: 20px; text-transform: capitalize; white-space: nowrap; }
+.with-us { background: var(--accent-light); color: var(--accent-text); }
+.with-customer { background: var(--amber-bg); color: var(--amber); }
+.with-both { background: #f3e8ff; color: #7e22ce; }
+.with-unknown { background: var(--bg); color: var(--text-faint); }
+
+@media (max-width: 720px) {
+  .status-head { display: none; }
+  .status-row { grid-template-columns: 1fr; gap: 0.25rem; }
+}

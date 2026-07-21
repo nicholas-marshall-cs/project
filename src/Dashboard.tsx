@@ -177,7 +177,37 @@ export default function Dashboard({ session }: { session: Session }) {
                   <div className="stat-card warn"><div className="num">{upcomingGoLive.length}</div><div className="label">Go-lives (next 30d)</div></div>
                 </div>
 
-                <div className="section-title">Upcoming go-lives</div>
+                <div className="section-title">Status</div>
+                <div className="status-table">
+                  <div className="status-head">
+                    <span>Customer</span><span>With</span><span>Current status</span><span>Updated</span>
+                  </div>
+                  {customers.map((c) => {
+                    const latest = spotlight
+                      .filter((s) => s.customer_id === c.id)
+                      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0]
+                    return (
+                      <div key={c.id} className="status-row" onClick={() => { setTab('customers'); setExpanded(c.id) }}>
+                        <span className="status-cust">{c.name}</span>
+                        {latest ? (
+                          <>
+                            <span><WithBadge who={latest.owner} /></span>
+                            <span className="status-text">{latest.text}</span>
+                            <span className="muted">{timeAgo(latest.created_at)}</span>
+                          </>
+                        ) : (
+                          <>
+                            <span className="muted">—</span>
+                            <span className="muted">No status logged yet</span>
+                            <span className="muted">—</span>
+                          </>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+
+                                <div className="section-title">Upcoming go-lives</div>
                 <div className="list">
                   {upcomingGoLive.length === 0 && <p className="muted">Nothing in the next 30 days.</p>}
                   {upcomingGoLive.map((c) => (
@@ -340,6 +370,23 @@ export default function Dashboard({ session }: { session: Session }) {
       </main>
     </div>
   )
+}
+
+function WithBadge({ who }: { who: string | null }) {
+  const w = (who || 'unknown').toLowerCase()
+  const label = who || 'Unknown'
+  return <span className={`with-badge with-${w}`}>{label}</span>
+}
+
+function timeAgo(iso: string) {
+  const ms = Date.now() - new Date(iso).getTime()
+  const mins = Math.round(ms / 60000)
+  if (mins < 60) return `${mins}m ago`
+  const hours = Math.round(mins / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.round(hours / 24)
+  if (days < 30) return `${days}d ago`
+  return new Date(iso).toLocaleDateString()
 }
 
 function AddRow({ customers, onAdd, placeholder, textarea }: { customers: Customer[]; onAdd: (customerId: string, text: string) => void; placeholder: string; textarea?: boolean }) {
