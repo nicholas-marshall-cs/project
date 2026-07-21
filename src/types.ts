@@ -63,6 +63,14 @@ export interface Spotlight {
   created_at: string
 }
 
+export interface Note {
+  id: string
+  customer_id: string
+  text: string
+  author: string
+  created_at: string
+}
+
 export interface StatusDraft {
   id: string
   customer_id: string

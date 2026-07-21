@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
-import { LayoutDashboard, Building2, CheckSquare, AlertTriangle, Activity, Clock, ChevronRight, ChevronDown, ClipboardCheck, Pencil, Trash2, ShieldCheck, AlertCircle, Sun, Moon } from 'lucide-react'
+import { LayoutDashboard, Building2, CheckSquare, AlertTriangle, Activity, Clock, ChevronRight, ChevronDown, ClipboardCheck, Pencil, Trash2, ShieldCheck, AlertCircle, Sun, Moon, StickyNote } from 'lucide-react'
 import { supabase } from './supabaseClient'
-import type { Customer, Task, Blocker, UpdateRow, Spotlight, Milestone, StatusDraft, Role, AllowedUser } from './types'
+import type { Customer, Task, Blocker, UpdateRow, Spotlight, Milestone, StatusDraft, Role, AllowedUser, Note } from './types'
 
-type Tab = 'overview' | 'review' | 'customers' | 'tasks' | 'blockers' | 'status' | 'updates' | 'users'
+type Tab = 'overview' | 'review' | 'customers' | 'tasks' | 'blockers' | 'status' | 'updates' | 'notes' | 'users'
 
 const STAGES: { key: keyof Customer; label: string }[] = [
   { key: 'demo', label: 'Demo' },
@@ -26,6 +26,7 @@ const NAV: { key: Tab; label: string; icon: typeof LayoutDashboard; adminOnly?: 
   { key: 'blockers', label: 'Blockers', icon: AlertTriangle },
   { key: 'status', label: 'Status', icon: Activity },
   { key: 'updates', label: 'Updates', icon: Clock },
+  { key: 'notes', label: 'Notes', icon: StickyNote },
   { key: 'users', label: 'Users', icon: ShieldCheck, adminOnly: true },
 ]
 
@@ -36,6 +37,7 @@ export default function Dashboard({ session }: { session: Session }) {
   const [blockers, setBlockers] = useState<Blocker[]>([])
   const [updates, setUpdates] = useState<UpdateRow[]>([])
   const [spotlight, setSpotlight] = useState<Spotlight[]>([])
+  const [notes, setNotes] = useState<Note[]>([])
   const [statusDrafts, setStatusDrafts] = useState<StatusDraft[]>([])
   const [allowedUsers, setAllowedUsers] = useState<AllowedUser[]>([])
   const [myRole, setMyRole] = useState<Role | null>(null)
@@ -57,16 +59,17 @@ export default function Dashboard({ session }: { session: Session }) {
   async function loadAll() {
     setLoading(true)
     setErrorMsg(null)
-    const [c, t, b, u, s, d] = await Promise.all([
+    const [c, t, b, u, s, d, n] = await Promise.all([
       supabase.from('customers').select('*').order('name'),
       supabase.from('tasks').select('*').order('created_at', { ascending: false }),
       supabase.from('blockers').select('*').order('created_at', { ascending: false }),
       supabase.from('updates').select('*').order('created_at', { ascending: false }),
       supabase.from('spotlight').select('*').order('created_at', { ascending: false }),
       supabase.from('status_drafts').select('*').order('created_at', { ascending: false }),
+      supabase.from('notes').select('*').order('created_at', { ascending: false }),
     ])
-    if (c.error || t.error || b.error || u.error || s.error || d.error) {
-      setErrorMsg((c.error || t.error || b.error || u.error || s.error || d.error)?.message ?? 'Could not load data.')
+    if (c.error || t.error || b.error || u.error || s.error || d.error || n.error) {
+      setErrorMsg((c.error || t.error || b.error || u.error || s.error || d.error || n.error)?.message ?? 'Could not load data.')
     } else {
       setCustomers(c.data as Customer[])
       setTasks(t.data as Task[])
@@ -74,6 +77,7 @@ export default function Dashboard({ session }: { session: Session }) {
       setUpdates(u.data as UpdateRow[])
       setSpotlight(s.data as Spotlight[])
       setStatusDrafts(d.data as StatusDraft[])
+      setNotes(n.data as Note[])
     }
     setLoading(false)
   }
@@ -138,6 +142,16 @@ export default function Dashboard({ session }: { session: Session }) {
     const { error } = await supabase.from('updates').insert({ customer_id: customerId, text: text.trim(), author: session.user.email })
     if (error) setErrorMsg(error.message); else loadAll()
   }
+  async function addNote(customerId: string, text: string) {
+    if (!text.trim() || !customerId) return
+    const { error } = await supabase.from('notes').insert({ customer_id: customerId, text: text.trim(), author: session.user.email })
+    if (error) setErrorMsg(error.message); else loadAll()
+  }
+  async function deleteNote(note: Note) {
+    if (!window.confirm('Delete this note? This cannot be undone.')) return
+    const { error } = await supabase.from('notes').delete().eq('id', note.id)
+    if (error) setErrorMsg(error.message); else loadAll()
+  }
   async function addSpotlight(customerId: string, who: string, text: string) {
     if (!text.trim() || !customerId) return
     const { error } = await supabase.from('spotlight').insert({ customer_id: customerId, text: text.trim(), owner: who })
@@ -185,6 +199,7 @@ export default function Dashboard({ session }: { session: Session }) {
   const filteredBlockers = blockers.filter((b) => customerFilter === 'all' || b.customer_id === customerFilter)
   const filteredUpdates = updates.filter((u) => customerFilter === 'all' || u.customer_id === customerFilter)
   const filteredSpotlight = spotlight.filter((s) => customerFilter === 'all' || s.customer_id === customerFilter)
+  const filteredNotes = notes.filter((n) => customerFilter === 'all' || n.customer_id === customerFilter)
 
   const pendingDrafts = statusDrafts.filter((d) => d.status === 'pending')
   const openTasks = tasks.filter((t) => t.status !== 'Done')
@@ -518,6 +533,28 @@ export default function Dashboard({ session }: { session: Session }) {
                               )}
                               {canEdit && <CustomerStatusForm customerId={c.id} onAdd={addSpotlight} />}
                             </div>
+
+                            <div className="milestones">
+                              <h4>Notes</h4>
+                              {notes
+                                .filter((n) => n.customer_id === c.id)
+                                .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+                                .map((n) => (
+                                  <div key={n.id} className="note-row">
+                                    <span className="note-text">{n.text}</span>
+                                    <span className="muted note-meta">{n.author} · {timeAgo(n.created_at)}</span>
+                                    {isAdmin && (
+                                      <button className="icon-btn danger" title="Delete note" onClick={() => deleteNote(n)}>
+                                        <Trash2 size={11} />
+                                      </button>
+                                    )}
+                                  </div>
+                                ))}
+                              {notes.filter((n) => n.customer_id === c.id).length === 0 && (
+                                <p className="muted">No notes yet.</p>
+                              )}
+                              {canEdit && <CustomerNoteForm customerId={c.id} onAdd={addNote} />}
+                            </div>
                           </div>
                         )}
                       </div>
@@ -610,6 +647,30 @@ export default function Dashboard({ session }: { session: Session }) {
                     </div>
                   ))}
                   {filteredUpdates.length === 0 && <p className="muted">No updates logged yet.</p>}
+                </div>
+              </>
+            )}
+
+            {tab === 'notes' && (
+              <>
+                <p className="muted tab-hint">Freeform context that isn't a status update — reminders, contacts, things to remember about a customer.</p>
+                {canEdit && <AddRow customers={customers} onAdd={addNote} placeholder="e.g. Their PM is on leave until Aug 4" textarea />}
+                <div className="list">
+                  {filteredNotes.map((n) => (
+                    <div key={n.id} className="feed-card note-card">
+                      <div className="feed-top">
+                        <span className="feed-cust">{customerName(n.customer_id)}</span>
+                        <span>{n.author} · {new Date(n.created_at).toLocaleString()}</span>
+                      </div>
+                      <div className="feed-text">{n.text}</div>
+                      {isAdmin && (
+                        <button className="icon-btn danger note-delete" title="Delete note" onClick={() => deleteNote(n)}>
+                          <Trash2 size={12} />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                  {filteredNotes.length === 0 && <p className="muted">No notes yet.</p>}
                 </div>
               </>
             )}
@@ -721,6 +782,21 @@ function CustomerStatusForm({ customerId, onAdd }: { customerId: string; onAdd: 
       </select>
       <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Log a status update…" required />
       <button type="submit">Update</button>
+    </form>
+  )
+}
+
+function CustomerNoteForm({ customerId, onAdd }: { customerId: string; onAdd: (customerId: string, text: string) => void }) {
+  const [text, setText] = useState('')
+  function submit(e: React.FormEvent) {
+    e.preventDefault()
+    onAdd(customerId, text)
+    setText('')
+  }
+  return (
+    <form className="add-row inline-status-form" onSubmit={submit}>
+      <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Add a note…" required />
+      <button type="submit">Add</button>
     </form>
   )
 }

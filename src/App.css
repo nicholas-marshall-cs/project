@@ -149,8 +149,16 @@ body {
 .blocker-detail { font-size: 0.8rem; color: var(--text-muted); margin-top: 0.35rem; line-height: 1.45; white-space: pre-wrap; }
 .blocker-meta { font-size: 0.72rem; color: var(--text-faint); margin-top: 0.4rem; }
 
-.feed-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.7rem 0.9rem; box-shadow: var(--shadow); }
+.feed-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.7rem 0.9rem; box-shadow: var(--shadow); position: relative; }
 .feed-card.system { opacity: 0.65; }
+.feed-card.note-card { border-left: 3px solid var(--accent); }
+.note-delete { position: absolute; top: 0.6rem; right: 0.7rem; }
+.tab-hint { margin-bottom: 0.9rem; font-size: 0.83rem; }
+
+.note-row { display: flex; align-items: center; gap: 0.5rem; font-size: 0.83rem; padding: 0.3rem 0; border-bottom: 1px dashed var(--border); }
+.note-row:last-of-type { border-bottom: none; }
+.note-text { flex: 1; line-height: 1.4; }
+.note-meta { font-size: 0.72rem; white-space: nowrap; }
 .feed-top { display: flex; justify-content: space-between; font-size: 0.72rem; color: var(--text-faint); margin-bottom: 0.3rem; }
 .feed-cust { color: var(--accent-text); font-weight: 600; }
 .feed-text { font-size: 0.85rem; white-space: pre-wrap; line-height: 1.5; }
