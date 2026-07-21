@@ -95,9 +95,9 @@ export default function Dashboard({ session }: { session: Session }) {
     const { error } = await supabase.from('updates').insert({ customer_id: customerId, text: text.trim(), author: session.user.email })
     if (error) setErrorMsg(error.message); else loadAll()
   }
-  async function addSpotlight(customerId: string, text: string) {
+  async function addSpotlight(customerId: string, who: string, text: string) {
     if (!text.trim() || !customerId) return
-    const { error } = await supabase.from('spotlight').insert({ customer_id: customerId, text: text.trim(), owner: session.user.email })
+    const { error } = await supabase.from('spotlight').insert({ customer_id: customerId, text: text.trim(), owner: who })
     if (error) setErrorMsg(error.message); else loadAll()
   }
   async function toggleMilestone(customer: Customer, key: string) {
@@ -338,7 +338,7 @@ export default function Dashboard({ session }: { session: Session }) {
 
             {tab === 'spotlight' && (
               <>
-                <AddRow customers={customers} onAdd={addSpotlight} placeholder="Current status / focus" textarea />
+                <AddStatusRow customers={customers} onAdd={addSpotlight} />
                 <div className="list">
                   {filteredSpotlight.map((s) => (
                     <div key={s.id} className="feed-card">
@@ -387,6 +387,32 @@ function timeAgo(iso: string) {
   const days = Math.round(hours / 24)
   if (days < 30) return `${days}d ago`
   return new Date(iso).toLocaleDateString()
+}
+
+function AddStatusRow({ customers, onAdd }: { customers: Customer[]; onAdd: (customerId: string, who: string, text: string) => void }) {
+  const [customerId, setCustomerId] = useState('')
+  const [who, setWho] = useState('Both')
+  const [text, setText] = useState('')
+  function submit(e: React.FormEvent) {
+    e.preventDefault()
+    onAdd(customerId, who, text)
+    setText('')
+  }
+  return (
+    <form className="add-row" onSubmit={submit}>
+      <select value={customerId} onChange={(e) => setCustomerId(e.target.value)} required>
+        <option value="" disabled>Customer…</option>
+        {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+      </select>
+      <select value={who} onChange={(e) => setWho(e.target.value)}>
+        <option value="Us">With us</option>
+        <option value="Customer">With customer</option>
+        <option value="Both">Both</option>
+      </select>
+      <textarea value={text} onChange={(e) => setText(e.target.value)} placeholder="Current status / requirement" required />
+      <button type="submit">Update status</button>
+    </form>
+  )
 }
 
 function AddRow({ customers, onAdd, placeholder, textarea }: { customers: Customer[]; onAdd: (customerId: string, text: string) => void; placeholder: string; textarea?: boolean }) {
