@@ -60,3 +60,15 @@ export interface Spotlight {
   owner: string | null
   created_at: string
 }
+
+export interface StatusDraft {
+  id: string
+  customer_id: string
+  proposed_text: string
+  proposed_owner: 'Us' | 'Customer' | 'Both'
+  source_summary: string | null
+  status: 'pending' | 'approved' | 'dismissed'
+  created_at: string
+  reviewed_at: string | null
+  reviewed_by: string | null
+}

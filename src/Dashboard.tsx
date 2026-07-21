@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
-import { LayoutDashboard, Building2, CheckSquare, AlertTriangle, Activity, Clock, ChevronRight, ChevronDown } from 'lucide-react'
+import { LayoutDashboard, Building2, CheckSquare, AlertTriangle, Activity, Clock, ChevronRight, ChevronDown, ClipboardCheck } from 'lucide-react'
 import { supabase } from './supabaseClient'
-import type { Customer, Task, Blocker, UpdateRow, Spotlight, Milestone } from './types'
+import type { Customer, Task, Blocker, UpdateRow, Spotlight, Milestone, StatusDraft } from './types'
 
-type Tab = 'overview' | 'customers' | 'tasks' | 'blockers' | 'status' | 'updates'
+type Tab = 'overview' | 'review' | 'customers' | 'tasks' | 'blockers' | 'status' | 'updates'
 
 const STAGES: { key: keyof Customer; label: string }[] = [
   { key: 'demo', label: 'Demo' },
@@ -20,6 +20,7 @@ const STAGES: { key: keyof Customer; label: string }[] = [
 
 const NAV: { key: Tab; label: string; icon: typeof LayoutDashboard }[] = [
   { key: 'overview', label: 'Overview', icon: LayoutDashboard },
+  { key: 'review', label: 'Review', icon: ClipboardCheck },
   { key: 'customers', label: 'Customers', icon: Building2 },
   { key: 'tasks', label: 'Tasks', icon: CheckSquare },
   { key: 'blockers', label: 'Blockers', icon: AlertTriangle },
@@ -34,6 +35,7 @@ export default function Dashboard({ session }: { session: Session }) {
   const [blockers, setBlockers] = useState<Blocker[]>([])
   const [updates, setUpdates] = useState<UpdateRow[]>([])
   const [spotlight, setSpotlight] = useState<Spotlight[]>([])
+  const [statusDrafts, setStatusDrafts] = useState<StatusDraft[]>([])
   const [customerFilter, setCustomerFilter] = useState<string>('all')
   const [expanded, setExpanded] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -42,21 +44,23 @@ export default function Dashboard({ session }: { session: Session }) {
   async function loadAll() {
     setLoading(true)
     setErrorMsg(null)
-    const [c, t, b, u, s] = await Promise.all([
+    const [c, t, b, u, s, d] = await Promise.all([
       supabase.from('customers').select('*').order('name'),
       supabase.from('tasks').select('*').order('created_at', { ascending: false }),
       supabase.from('blockers').select('*').order('created_at', { ascending: false }),
       supabase.from('updates').select('*').order('created_at', { ascending: false }),
       supabase.from('spotlight').select('*').order('created_at', { ascending: false }),
+      supabase.from('status_drafts').select('*').order('created_at', { ascending: false }),
     ])
-    if (c.error || t.error || b.error || u.error || s.error) {
-      setErrorMsg((c.error || t.error || b.error || u.error || s.error)?.message ?? 'Could not load data.')
+    if (c.error || t.error || b.error || u.error || s.error || d.error) {
+      setErrorMsg((c.error || t.error || b.error || u.error || s.error || d.error)?.message ?? 'Could not load data.')
     } else {
       setCustomers(c.data as Customer[])
       setTasks(t.data as Task[])
       setBlockers(b.data as Blocker[])
       setUpdates(u.data as UpdateRow[])
       setSpotlight(s.data as Spotlight[])
+      setStatusDrafts(d.data as StatusDraft[])
     }
     setLoading(false)
   }
@@ -100,6 +104,22 @@ export default function Dashboard({ session }: { session: Session }) {
     const { error } = await supabase.from('spotlight').insert({ customer_id: customerId, text: text.trim(), owner: who })
     if (error) setErrorMsg(error.message); else loadAll()
   }
+  async function approveDraft(draft: StatusDraft, text: string, owner: string) {
+    const { error: insertErr } = await supabase.from('spotlight').insert({ customer_id: draft.customer_id, text: text.trim(), owner })
+    if (insertErr) { setErrorMsg(insertErr.message); return }
+    const { error: updateErr } = await supabase
+      .from('status_drafts')
+      .update({ status: 'approved', reviewed_at: new Date().toISOString(), reviewed_by: session.user.email })
+      .eq('id', draft.id)
+    if (updateErr) setErrorMsg(updateErr.message); else loadAll()
+  }
+  async function dismissDraft(draft: StatusDraft) {
+    const { error } = await supabase
+      .from('status_drafts')
+      .update({ status: 'dismissed', reviewed_at: new Date().toISOString(), reviewed_by: session.user.email })
+      .eq('id', draft.id)
+    if (error) setErrorMsg(error.message); else loadAll()
+  }
   async function toggleMilestone(customer: Customer, key: string) {
     const updated = customer.milestones.map((m) => (m.key === key ? { ...m, completed: !m.completed } : m))
     const { error } = await supabase.from('customers').update({ milestones: updated }).eq('id', customer.id)
@@ -111,6 +131,7 @@ export default function Dashboard({ session }: { session: Session }) {
   const filteredUpdates = updates.filter((u) => customerFilter === 'all' || u.customer_id === customerFilter)
   const filteredSpotlight = spotlight.filter((s) => customerFilter === 'all' || s.customer_id === customerFilter)
 
+  const pendingDrafts = statusDrafts.filter((d) => d.status === 'pending')
   const openTasks = tasks.filter((t) => t.status !== 'Done')
   const openBlockers = blockers.filter((b) => !b.resolved_at)
   const upcomingGoLive = customers
@@ -139,6 +160,7 @@ export default function Dashboard({ session }: { session: Session }) {
             <button key={key} className={tab === key ? 'sidebar-link active' : 'sidebar-link'} onClick={() => setTab(key)}>
               <Icon size={16} />
               {label}
+              {key === 'review' && pendingDrafts.length > 0 && <span className="nav-badge">{pendingDrafts.length}</span>}
             </button>
           ))}
         </nav>
@@ -232,6 +254,43 @@ export default function Dashboard({ session }: { session: Session }) {
                     </div>
                   ))}
                 </div>
+              </>
+            )}
+
+            {tab === 'review' && (
+              <>
+                {pendingDrafts.length === 0 ? (
+                  <p className="muted">All caught up — no drafts waiting on review.</p>
+                ) : (
+                  <div className="list">
+                    {pendingDrafts.map((d) => (
+                      <DraftCard
+                        key={d.id}
+                        draft={d}
+                        customerName={customerName(d.customer_id)}
+                        onApprove={approveDraft}
+                        onDismiss={dismissDraft}
+                      />
+                    ))}
+                  </div>
+                )}
+
+                {statusDrafts.some((d) => d.status !== 'pending') && (
+                  <>
+                    <div className="section-title">Recently reviewed</div>
+                    <div className="list">
+                      {statusDrafts.filter((d) => d.status !== 'pending').slice(0, 15).map((d) => (
+                        <div key={d.id} className="feed-card system">
+                          <div className="feed-top">
+                            <span className="feed-cust">{customerName(d.customer_id)} · {d.status}</span>
+                            <span>{d.reviewed_by} · {d.reviewed_at ? new Date(d.reviewed_at).toLocaleString() : ''}</span>
+                          </div>
+                          <div className="feed-text">{d.proposed_text}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
               </>
             )}
 
@@ -452,6 +511,43 @@ function CustomerStatusForm({ customerId, onAdd }: { customerId: string; onAdd: 
       <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Log a status update…" required />
       <button type="submit">Update</button>
     </form>
+  )
+}
+
+function DraftCard({
+  draft,
+  customerName,
+  onApprove,
+  onDismiss,
+}: {
+  draft: StatusDraft
+  customerName: string
+  onApprove: (draft: StatusDraft, text: string, owner: string) => void
+  onDismiss: (draft: StatusDraft) => void
+}) {
+  const [text, setText] = useState(draft.proposed_text)
+  const [owner, setOwner] = useState(draft.proposed_owner)
+
+  return (
+    <div className="draft-card">
+      <div className="draft-top">
+        <span className="feed-cust">{customerName}</span>
+        <span className="muted">{new Date(draft.created_at).toLocaleString()}</span>
+      </div>
+      {draft.source_summary && <div className="draft-source muted">{draft.source_summary}</div>}
+      <div className="draft-edit-row">
+        <select value={owner} onChange={(e) => setOwner(e.target.value as StatusDraft['proposed_owner'])}>
+          <option value="Us">With us</option>
+          <option value="Customer">With customer</option>
+          <option value="Both">Both</option>
+        </select>
+        <textarea value={text} onChange={(e) => setText(e.target.value)} />
+      </div>
+      <div className="draft-actions">
+        <button className="approve-btn" onClick={() => onApprove(draft, text, owner)}>Approve</button>
+        <button className="dismiss-btn" onClick={() => onDismiss(draft)}>Dismiss</button>
+      </div>
+    </div>
   )
 }
 
