@@ -1,6 +1,26 @@
+export interface Milestone {
+  key: string
+  label: string
+  date?: string
+  completed: boolean
+}
+
 export interface Customer {
   id: string
   name: string
+  owner: string | null
+  type: string | null
+  notes: string | null
+  demo: string | null
+  agreement: string | null
+  handover: string | null
+  roadmap_disc: string | null
+  roadmap_doc: string | null
+  go_live: string | null
+  api_workshop: string | null
+  training: string | null
+  mo_conclusion: string | null
+  milestones: Milestone[]
   created_at: string
 }
 
@@ -8,7 +28,8 @@ export interface Task {
   id: string
   customer_id: string
   title: string
-  status: 'Open' | 'In Progress' | 'Done'
+  owner: string | null
+  status: 'To Do' | 'Open' | 'In Progress' | 'Done'
   created_at: string
   updated_at: string
 }
@@ -17,6 +38,8 @@ export interface Blocker {
   id: string
   customer_id: string
   title: string
+  type: string | null
+  detail: string | null
   resolved_at: string | null
   created_at: string
 }
@@ -26,5 +49,14 @@ export interface UpdateRow {
   customer_id: string
   text: string
   author: string
+  is_system: boolean
+  created_at: string
+}
+
+export interface Spotlight {
+  id: string
+  customer_id: string
+  text: string
+  owner: string | null
   created_at: string
 }

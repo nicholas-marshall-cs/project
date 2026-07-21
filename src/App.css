@@ -45,3 +45,18 @@ th { color: #888; font-weight: 600; font-size: 0.78rem; text-transform: uppercas
 .pill { padding: 0.25rem 0.7rem; border-radius: 20px; border: none; cursor: pointer; font-size: 0.78rem; font-weight: 600; }
 .pill.open { background: #fdecea; color: #c0392b; }
 .pill.resolved { background: #e8f5e9; color: #27632a; }
+
+.clickable { cursor: pointer; }
+.clickable:hover { background: #fafafa; }
+.customer-detail { padding: 0.75rem 0.5rem; background: #fafafa; border-radius: 8px; }
+.notes { margin: 0 0 0.75rem; color: #444; font-size: 0.85rem; white-space: pre-wrap; }
+.stage-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 0.5rem; margin-bottom: 0.75rem; }
+.stage { padding: 0.4rem 0.6rem; border-radius: 6px; background: #fff; border: 1px solid #eee; font-size: 0.78rem; }
+.stage.done { border-color: #cfe8d1; background: #f4fbf5; }
+.stage-label { display: block; color: #888; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.02em; }
+.stage-date { display: block; font-weight: 600; margin-top: 0.1rem; }
+.milestones h4 { margin: 0.5rem 0 0.4rem; font-size: 0.85rem; }
+.milestone-row { display: flex; align-items: center; gap: 0.4rem; font-size: 0.82rem; padding: 0.15rem 0; }
+.milestone-row .done { text-decoration: line-through; color: #999; }
+.detail { font-size: 0.78rem; margin-top: 0.2rem; white-space: pre-wrap; }
+.system-row { color: #888; }
