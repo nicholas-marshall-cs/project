@@ -96,7 +96,7 @@ body {
 .section-title { font-size: 0.95rem; font-weight: 600; margin: 1.6rem 0 0.75rem; }
 
 /* ---------- Customer cards ---------- */
-.customer-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 0.9rem; }
+.customer-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 0.9rem; align-items: start; }
 .customer-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 1.1rem 1.2rem; cursor: pointer; transition: border-color 0.12s; }
 .customer-card:hover { border-color: #c7d2fe; }
 .customer-card-top { display: flex; justify-content: space-between; align-items: flex-start; }

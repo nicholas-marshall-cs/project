@@ -100,9 +100,15 @@ export default function Dashboard({ session }: { session: Session }) {
     const { error } = await supabase.from('customers').insert({ name: name.trim() })
     if (error) setErrorMsg(error.message); else loadAll()
   }
+  async function patchCustomer(customerId: string, patch: Partial<Customer>) {
+    // Optimistic local update so a single field edit doesn't trigger a full 6-table reload
+    // (which was making date pickers feel like they "saved and reloaded" mid-edit).
+    setCustomers((prev) => prev.map((c) => (c.id === customerId ? { ...c, ...patch } : c)))
+    const { error } = await supabase.from('customers').update(patch).eq('id', customerId)
+    if (error) { setErrorMsg(error.message); loadAll() }
+  }
   async function updateCustomerField(customerId: string, field: string, value: string | null) {
-    const { error } = await supabase.from('customers').update({ [field]: value || null }).eq('id', customerId)
-    if (error) setErrorMsg(error.message); else loadAll()
+    await patchCustomer(customerId, { [field]: value || null } as unknown as Partial<Customer>)
   }
   async function deleteCustomer(customer: Customer) {
     if (!window.confirm(`Permanently delete ${customer.name}? This also deletes all of their tasks, blockers, updates and status history. This cannot be undone.`)) return
@@ -155,8 +161,9 @@ export default function Dashboard({ session }: { session: Session }) {
   }
   async function updateMilestone(customer: Customer, key: string, patch: Partial<Milestone>) {
     const updated = customer.milestones.map((m) => (m.key === key ? { ...m, ...patch } : m))
+    setCustomers((prev) => prev.map((c) => (c.id === customer.id ? { ...c, milestones: updated } : c)))
     const { error } = await supabase.from('customers').update({ milestones: updated }).eq('id', customer.id)
-    if (error) setErrorMsg(error.message); else loadAll()
+    if (error) { setErrorMsg(error.message); loadAll() }
   }
   async function addAllowedUser(email: string, role: Role) {
     if (!email.trim()) return
@@ -434,11 +441,10 @@ export default function Dashboard({ session }: { session: Session }) {
                                 <div key={String(s.key)} className={c[s.key] ? 'stage done' : 'stage'}>
                                   <span className="stage-label">{s.label}</span>
                                   {canEdit ? (
-                                    <input
-                                      type="date"
+                                    <DateField
                                       className="stage-date-input"
                                       value={(c[s.key] as string) || ''}
-                                      onChange={(e) => updateCustomerField(c.id, String(s.key), e.target.value)}
+                                      onCommit={(v) => updateCustomerField(c.id, String(s.key), v)}
                                     />
                                   ) : (
                                     <span className="stage-date">{(c[s.key] as string) || '—'}</span>
@@ -459,11 +465,10 @@ export default function Dashboard({ session }: { session: Session }) {
                                     />
                                     <span className={m.completed ? 'done' : ''}>{m.label}</span>
                                     {canEdit ? (
-                                      <input
-                                        type="date"
+                                      <DateField
                                         className="milestone-date-input"
                                         value={m.date || ''}
-                                        onChange={(e) => updateMilestone(c, m.key, { date: e.target.value })}
+                                        onCommit={(v) => updateMilestone(c, m.key, { date: v })}
                                       />
                                     ) : (
                                       m.date && <span className="muted"> — {m.date}</span>
@@ -600,6 +605,26 @@ export default function Dashboard({ session }: { session: Session }) {
         )}
       </main>
     </div>
+  )
+}
+
+function DateField({ value, onCommit, className }: { value: string; onCommit: (value: string) => void; className?: string }) {
+  const [local, setLocal] = useState(value)
+  useEffect(() => { setLocal(value) }, [value])
+
+  function commit() {
+    if (local !== value) onCommit(local)
+  }
+
+  return (
+    <input
+      type="date"
+      className={className}
+      value={local}
+      onChange={(e) => setLocal(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+    />
   )
 }
 
