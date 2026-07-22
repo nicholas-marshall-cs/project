@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
-import { LayoutDashboard, Building2, CheckSquare, AlertTriangle, Activity, Clock, ChevronRight, ChevronDown, ClipboardCheck, Pencil, Trash2, ShieldCheck, AlertCircle, Sun, Moon, StickyNote } from 'lucide-react'
+import { LayoutDashboard, Building2, CheckSquare, AlertTriangle, Activity, Clock, ChevronRight, ChevronDown, ClipboardCheck, Pencil, Trash2, ShieldCheck, AlertCircle, Sun, Moon, StickyNote, Lightbulb, Equal, ArrowRight } from 'lucide-react'
 import { supabase } from './supabaseClient'
 import type { Customer, Task, Blocker, UpdateRow, Spotlight, Milestone, StatusDraft, Role, AllowedUser, Note } from './types'
 
@@ -817,6 +817,11 @@ function DraftCard({
   const [text, setText] = useState(draft.proposed_text)
   const [owner, setOwner] = useState(draft.proposed_owner)
 
+  const hasPrevious = draft.previous_text != null
+  const unchanged = hasPrevious
+    && draft.previous_text!.trim() === draft.proposed_text.trim()
+    && (draft.previous_owner ?? 'Both') === draft.proposed_owner
+
   return (
     <div className="draft-card">
       <div className="draft-top">
@@ -824,6 +829,38 @@ function DraftCard({
         <span className="muted">{new Date(draft.created_at).toLocaleString()}</span>
       </div>
       {draft.source_summary && <div className="draft-source muted">{draft.source_summary}</div>}
+
+      {hasPrevious ? (
+        <div className={unchanged ? 'draft-diff unchanged' : 'draft-diff changed'}>
+          <div className="draft-diff-row">
+            <span className="draft-diff-label">Yesterday</span>
+            <WithBadge who={draft.previous_owner} />
+            <span className="draft-diff-text">{draft.previous_text}</span>
+          </div>
+          <div className="draft-diff-sep">
+            {unchanged ? <Equal size={13} /> : <ArrowRight size={13} />}
+          </div>
+          <div className="draft-diff-row">
+            <span className="draft-diff-label">{unchanged ? 'Today · no change' : 'Today'}</span>
+            <WithBadge who={draft.proposed_owner} />
+            <span className="draft-diff-text">{draft.proposed_text}</span>
+          </div>
+        </div>
+      ) : (
+        <div className="draft-diff first">
+          <div className="draft-diff-row">
+            <span className="draft-diff-label">First status logged for this customer — nothing to compare yet.</span>
+          </div>
+        </div>
+      )}
+
+      {draft.suggested_action && (
+        <div className="draft-suggestion">
+          <Lightbulb size={13} />
+          <span>{draft.suggested_action}</span>
+        </div>
+      )}
+
       <div className="draft-edit-row">
         <select value={owner} disabled={!canEdit} onChange={(e) => setOwner(e.target.value as StatusDraft['proposed_owner'])}>
           <option value="Us">With us</option>
@@ -834,7 +871,7 @@ function DraftCard({
       </div>
       {canEdit && (
         <div className="draft-actions">
-          <button className="approve-btn" onClick={() => onApprove(draft, text, owner)}>Approve</button>
+          <button className="approve-btn" onClick={() => onApprove(draft, text, owner)}>{unchanged ? 'Confirm' : 'Approve'}</button>
           <button className="dismiss-btn" onClick={() => onDismiss(draft)}>Dismiss</button>
         </div>
       )}

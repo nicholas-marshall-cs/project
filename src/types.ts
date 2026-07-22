@@ -81,6 +81,13 @@ export interface StatusDraft {
   created_at: string
   reviewed_at: string | null
   reviewed_by: string | null
+  // Snapshot of the live spotlight entry at the moment this draft was generated,
+  // so the Review tab can show an explicit "yesterday vs today" diff.
+  previous_text: string | null
+  previous_owner: string | null
+  // Optional lightweight suggestion (e.g. "consider adding milestone X") shown
+  // alongside the draft. Informational only — never auto-applied on approve.
+  suggested_action: string | null
 }
 
 export type Role = 'admin' | 'editor' | 'viewer'
