@@ -232,6 +232,15 @@ th { color: var(--text-faint); font-weight: 600; font-size: 0.72rem; text-transf
 
 .draft-suggestion { display: flex; align-items: flex-start; gap: 0.45rem; background: var(--amber-bg); color: var(--amber); border-radius: var(--radius-sm); padding: 0.5rem 0.7rem; margin-bottom: 0.6rem; font-size: 0.8rem; line-height: 1.4; }
 .draft-suggestion svg { flex: 0 0 auto; margin-top: 0.15rem; }
+.draft-suggestion-body { flex: 1; display: flex; flex-direction: column; gap: 0.45rem; }
+.draft-suggestion-actions { display: flex; gap: 0.5rem; }
+.suggestion-apply-btn { padding: 0.3rem 0.7rem; border: none; border-radius: var(--radius-sm); background: var(--amber); color: white; font-size: 0.74rem; font-weight: 600; cursor: pointer; }
+.suggestion-apply-btn:hover { opacity: 0.9; }
+.suggestion-dismiss-btn { padding: 0.3rem 0.7rem; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--text-muted); font-size: 0.74rem; font-weight: 600; cursor: pointer; }
+.suggestion-dismiss-btn:hover { background: var(--bg); }
+.draft-suggestion.resolved { font-style: italic; }
+.draft-suggestion.resolved.applied { background: var(--green-bg); color: var(--green); }
+.draft-suggestion.resolved.dismissed { background: var(--bg); color: var(--text-faint); }
 
 .draft-edit-row { display: flex; gap: 0.5rem; align-items: flex-start; margin-bottom: 0.6rem; }
 .draft-edit-row select { flex: 0 0 auto; padding: 0.4rem 0.5rem; border-radius: var(--radius-sm); border: 1px solid var(--border); font-size: 0.82rem; }

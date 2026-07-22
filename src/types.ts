@@ -86,8 +86,13 @@ export interface StatusDraft {
   previous_text: string | null
   previous_owner: string | null
   // Optional lightweight suggestion (e.g. "consider adding milestone X") shown
-  // alongside the draft. Informational only — never auto-applied on approve.
+  // alongside the draft. Never auto-applied by the scheduled task — Nick has to
+  // click "Add as task/milestone" in the app for it to actually write anywhere.
   suggested_action: string | null
+  suggested_type: 'task' | 'milestone' | null
+  // null = not yet actioned. 'applied' = written to tasks/customers.milestones.
+  // 'dismissed' = declined. Only ever set by the app, never by the scheduled task.
+  suggested_status: 'applied' | 'dismissed' | null
 }
 
 export type Role = 'admin' | 'editor' | 'viewer'

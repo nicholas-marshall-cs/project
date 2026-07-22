@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
-import { LayoutDashboard, Building2, CheckSquare, AlertTriangle, Activity, Clock, ChevronRight, ChevronDown, ClipboardCheck, Pencil, Trash2, ShieldCheck, AlertCircle, Sun, Moon, StickyNote, Lightbulb, Equal, ArrowRight } from 'lucide-react'
+import { LayoutDashboard, Building2, CheckSquare, AlertTriangle, Activity, Clock, ChevronRight, ChevronDown, ClipboardCheck, Pencil, Trash2, ShieldCheck, AlertCircle, Sun, Moon, StickyNote, Lightbulb, Equal, ArrowRight, Check, X } from 'lucide-react'
 import { supabase } from './supabaseClient'
 import type { Customer, Task, Blocker, UpdateRow, Spotlight, Milestone, StatusDraft, Role, AllowedUser, Note } from './types'
 
@@ -171,6 +171,28 @@ export default function Dashboard({ session }: { session: Session }) {
       .from('status_drafts')
       .update({ status: 'dismissed', reviewed_at: new Date().toISOString(), reviewed_by: session.user.email })
       .eq('id', draft.id)
+    if (error) setErrorMsg(error.message); else loadAll()
+  }
+  // A draft's suggested_action is a separate decision from the status text itself —
+  // Nick can approve/dismiss the status independently of whether he acts on the
+  // suggestion, so this never touches status_drafts.status/reviewed_*.
+  async function applySuggestion(draft: StatusDraft) {
+    if (!draft.suggested_action || !draft.suggested_type) return
+    if (draft.suggested_type === 'task') {
+      const { error } = await supabase.from('tasks').insert({ customer_id: draft.customer_id, title: draft.suggested_action })
+      if (error) { setErrorMsg(error.message); return }
+    } else {
+      const customer = customers.find((c) => c.id === draft.customer_id)
+      if (!customer) { setErrorMsg('Could not find that customer to add the milestone to.'); return }
+      const newMilestone: Milestone = { key: `m_${Date.now()}`, label: draft.suggested_action, completed: false }
+      const { error } = await supabase.from('customers').update({ milestones: [...customer.milestones, newMilestone] }).eq('id', customer.id)
+      if (error) { setErrorMsg(error.message); return }
+    }
+    const { error: draftErr } = await supabase.from('status_drafts').update({ suggested_status: 'applied' }).eq('id', draft.id)
+    if (draftErr) setErrorMsg(draftErr.message); else loadAll()
+  }
+  async function dismissSuggestion(draft: StatusDraft) {
+    const { error } = await supabase.from('status_drafts').update({ suggested_status: 'dismissed' }).eq('id', draft.id)
     if (error) setErrorMsg(error.message); else loadAll()
   }
   async function updateMilestone(customer: Customer, key: string, patch: Partial<Milestone>) {
@@ -395,6 +417,8 @@ export default function Dashboard({ session }: { session: Session }) {
                         canEdit={canEdit}
                         onApprove={approveDraft}
                         onDismiss={dismissDraft}
+                        onApplySuggestion={applySuggestion}
+                        onDismissSuggestion={dismissSuggestion}
                       />
                     ))}
                   </div>
@@ -411,6 +435,7 @@ export default function Dashboard({ session }: { session: Session }) {
                             <span>{d.reviewed_by} · {d.reviewed_at ? new Date(d.reviewed_at).toLocaleString() : ''}</span>
                           </div>
                           <div className="feed-text">{d.proposed_text}</div>
+                          <SuggestionBlock draft={d} canEdit={canEdit} onApply={applySuggestion} onDismiss={dismissSuggestion} />
                         </div>
                       ))}
                     </div>
@@ -807,12 +832,16 @@ function DraftCard({
   canEdit,
   onApprove,
   onDismiss,
+  onApplySuggestion,
+  onDismissSuggestion,
 }: {
   draft: StatusDraft
   customerName: string
   canEdit: boolean
   onApprove: (draft: StatusDraft, text: string, owner: string) => void
   onDismiss: (draft: StatusDraft) => void
+  onApplySuggestion: (draft: StatusDraft) => void
+  onDismissSuggestion: (draft: StatusDraft) => void
 }) {
   const [text, setText] = useState(draft.proposed_text)
   const [owner, setOwner] = useState(draft.proposed_owner)
@@ -854,12 +883,7 @@ function DraftCard({
         </div>
       )}
 
-      {draft.suggested_action && (
-        <div className="draft-suggestion">
-          <Lightbulb size={13} />
-          <span>{draft.suggested_action}</span>
-        </div>
-      )}
+      <SuggestionBlock draft={draft} canEdit={canEdit} onApply={onApplySuggestion} onDismiss={onDismissSuggestion} />
 
       <div className="draft-edit-row">
         <select value={owner} disabled={!canEdit} onChange={(e) => setOwner(e.target.value as StatusDraft['proposed_owner'])}>
@@ -875,6 +899,57 @@ function DraftCard({
           <button className="dismiss-btn" onClick={() => onDismiss(draft)}>Dismiss</button>
         </div>
       )}
+    </div>
+  )
+}
+
+// Whether a suggestion has been acted on is tracked independently of the status
+// draft's own approve/dismiss decision, so this renders in both the pending
+// Review queue and the read-only "Recently reviewed" history below it.
+function SuggestionBlock({
+  draft,
+  canEdit,
+  onApply,
+  onDismiss,
+}: {
+  draft: StatusDraft
+  canEdit: boolean
+  onApply: (draft: StatusDraft) => void
+  onDismiss: (draft: StatusDraft) => void
+}) {
+  if (!draft.suggested_action) return null
+
+  if (draft.suggested_status === 'applied') {
+    return (
+      <div className="draft-suggestion resolved applied">
+        <Check size={13} />
+        <span>Added as {draft.suggested_type ?? 'task'}: {draft.suggested_action}</span>
+      </div>
+    )
+  }
+  if (draft.suggested_status === 'dismissed') {
+    return (
+      <div className="draft-suggestion resolved dismissed">
+        <X size={13} />
+        <span>Suggestion dismissed: {draft.suggested_action}</span>
+      </div>
+    )
+  }
+
+  return (
+    <div className="draft-suggestion">
+      <Lightbulb size={13} />
+      <div className="draft-suggestion-body">
+        <span>{draft.suggested_action}</span>
+        {canEdit && (
+          <div className="draft-suggestion-actions">
+            <button className="suggestion-apply-btn" onClick={() => onApply(draft)}>
+              Add as {draft.suggested_type ?? 'task'}
+            </button>
+            <button className="suggestion-dismiss-btn" onClick={() => onDismiss(draft)}>Dismiss</button>
+          </div>
+        )}
+      </div>
     </div>
   )
 }
