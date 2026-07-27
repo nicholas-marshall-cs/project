@@ -23,6 +23,9 @@ export interface Customer {
   training: string | null
   mo_conclusion: string | null
   milestones: Milestone[]
+  // Keys from the fixed STAGES list (e.g. "mo_conclusion") that this customer has
+  // opted to hide — the stage's stored date/value is untouched, it's just not shown.
+  hidden_stages: string[]
   created_at: string
 }
 
@@ -85,14 +88,36 @@ export interface StatusDraft {
   // so the Review tab can show an explicit "yesterday vs today" diff.
   previous_text: string | null
   previous_owner: string | null
-  // Optional lightweight suggestion (e.g. "consider adding milestone X") shown
-  // alongside the draft. Never auto-applied by the scheduled task — Nick has to
-  // click "Add as task/milestone" in the app for it to actually write anywhere.
-  suggested_action: string | null
-  suggested_type: 'task' | 'milestone' | null
-  // null = not yet actioned. 'applied' = written to tasks/customers.milestones.
-  // 'dismissed' = declined. Only ever set by the app, never by the scheduled task.
-  suggested_status: 'applied' | 'dismissed' | null
+}
+
+// Zero or more of these can be attached to a single StatusDraft (via draft_id) —
+// e.g. a new-blocker suggestion AND a close-task suggestion can both show up on
+// the same day's card. Never auto-applied by the scheduled task — Nick has to
+// click a button in the app for one to actually write anywhere.
+export interface StatusDraftSuggestion {
+  id: string
+  draft_id: string
+  customer_id: string
+  // 'create' = propose a brand new task/milestone/blocker (action is the
+  // title/label). 'close' = propose closing/completing an EXISTING task
+  // (target_id) or milestone (target_key), action is then just a human-readable
+  // label of what's being closed.
+  kind: 'create' | 'close'
+  type: 'task' | 'milestone' | 'blocker'
+  action: string
+  // For kind = 'close' + type = 'task': the tasks.id to mark Done.
+  target_id: string | null
+  // For kind = 'close' + type = 'milestone': the milestone's key within
+  // customers.milestones to mark completed.
+  target_key: string | null
+  // For kind = 'create' + type = 'blocker': the blockers.type to use when
+  // inserting (e.g. "Waiting on Customer", "Internal").
+  blocker_type: string | null
+  // 'pending' = not yet actioned. 'applied' = written to tasks/blockers/
+  // customers.milestones. 'dismissed' = declined. Only ever set to
+  // applied/dismissed by the app, never by the scheduled task.
+  status: 'pending' | 'applied' | 'dismissed'
+  created_at: string
 }
 
 export type Role = 'admin' | 'editor' | 'viewer'

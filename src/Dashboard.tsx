@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { LayoutDashboard, Building2, CheckSquare, AlertTriangle, Activity, Clock, ChevronRight, ChevronDown, ClipboardCheck, Pencil, Trash2, ShieldCheck, AlertCircle, Sun, Moon, StickyNote, Lightbulb, Equal, ArrowRight, Check, X } from 'lucide-react'
 import { supabase } from './supabaseClient'
-import type { Customer, Task, Blocker, UpdateRow, Spotlight, Milestone, StatusDraft, Role, AllowedUser, Note } from './types'
+import type { Customer, Task, Blocker, UpdateRow, Spotlight, Milestone, StatusDraft, StatusDraftSuggestion, Role, AllowedUser, Note } from './types'
 
 type Tab = 'overview' | 'review' | 'customers' | 'tasks' | 'blockers' | 'status' | 'updates' | 'notes' | 'users'
 
@@ -39,6 +39,7 @@ export default function Dashboard({ session }: { session: Session }) {
   const [spotlight, setSpotlight] = useState<Spotlight[]>([])
   const [notes, setNotes] = useState<Note[]>([])
   const [statusDrafts, setStatusDrafts] = useState<StatusDraft[]>([])
+  const [suggestions, setSuggestions] = useState<StatusDraftSuggestion[]>([])
   const [allowedUsers, setAllowedUsers] = useState<AllowedUser[]>([])
   const [myRole, setMyRole] = useState<Role | null>(null)
   const [customerFilter, setCustomerFilter] = useState<string>('all')
@@ -46,6 +47,7 @@ export default function Dashboard({ session }: { session: Session }) {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
+  const [digestCopied, setDigestCopied] = useState(false)
 
   const canEdit = myRole === 'admin' || myRole === 'editor'
   const isAdmin = myRole === 'admin'
@@ -59,17 +61,18 @@ export default function Dashboard({ session }: { session: Session }) {
   async function loadAll() {
     setLoading(true)
     setErrorMsg(null)
-    const [c, t, b, u, s, d, n] = await Promise.all([
+    const [c, t, b, u, s, d, sg, n] = await Promise.all([
       supabase.from('customers').select('*').order('name'),
       supabase.from('tasks').select('*').order('created_at', { ascending: false }),
       supabase.from('blockers').select('*').order('created_at', { ascending: false }),
       supabase.from('updates').select('*').order('created_at', { ascending: false }),
       supabase.from('spotlight').select('*').order('created_at', { ascending: false }),
       supabase.from('status_drafts').select('*').order('created_at', { ascending: false }),
+      supabase.from('status_draft_suggestions').select('*').order('created_at', { ascending: false }),
       supabase.from('notes').select('*').order('created_at', { ascending: false }),
     ])
-    if (c.error || t.error || b.error || u.error || s.error || d.error || n.error) {
-      setErrorMsg((c.error || t.error || b.error || u.error || s.error || d.error || n.error)?.message ?? 'Could not load data.')
+    if (c.error || t.error || b.error || u.error || s.error || d.error || sg.error || n.error) {
+      setErrorMsg((c.error || t.error || b.error || u.error || s.error || d.error || sg.error || n.error)?.message ?? 'Could not load data.')
     } else {
       setCustomers(c.data as Customer[])
       setTasks(t.data as Task[])
@@ -77,6 +80,7 @@ export default function Dashboard({ session }: { session: Session }) {
       setUpdates(u.data as UpdateRow[])
       setSpotlight(s.data as Spotlight[])
       setStatusDrafts(d.data as StatusDraft[])
+      setSuggestions(sg.data as StatusDraftSuggestion[])
       setNotes(n.data as Note[])
     }
     setLoading(false)
@@ -112,7 +116,21 @@ export default function Dashboard({ session }: { session: Session }) {
     if (error) { setErrorMsg(error.message); loadAll() }
   }
   async function updateCustomerField(customerId: string, field: string, value: string | null) {
-    await patchCustomer(customerId, { [field]: value || null } as unknown as Partial<Customer>)
+    const patch: Record<string, unknown> = { [field]: value || null }
+    // MO conclusion is a POC/MO-specific call — once a customer becomes termed or
+    // established it no longer applies, so auto-hide it on that transition. Still
+    // fully reversible afterwards via the "Hidden" restore chips on the stage grid.
+    if (field === 'type' && (value === 'termed' || value === 'established')) {
+      const customer = customers.find((c) => c.id === customerId)
+      const current = customer?.hidden_stages ?? []
+      if (!current.includes('mo_conclusion')) patch.hidden_stages = [...current, 'mo_conclusion']
+    }
+    await patchCustomer(customerId, patch as unknown as Partial<Customer>)
+  }
+  async function toggleStage(customer: Customer, key: string, hide: boolean) {
+    const current = customer.hidden_stages ?? []
+    const updated = hide ? [...current, key] : current.filter((k) => k !== key)
+    await patchCustomer(customer.id, { hidden_stages: updated } as unknown as Partial<Customer>)
   }
   async function deleteCustomer(customer: Customer) {
     if (!window.confirm(`Permanently delete ${customer.name}? This also deletes all of their tasks, blockers, updates and status history. This cannot be undone.`)) return
@@ -173,26 +191,56 @@ export default function Dashboard({ session }: { session: Session }) {
       .eq('id', draft.id)
     if (error) setErrorMsg(error.message); else loadAll()
   }
-  // A draft's suggested_action is a separate decision from the status text itself —
-  // Nick can approve/dismiss the status independently of whether he acts on the
-  // suggestion, so this never touches status_drafts.status/reviewed_*.
-  async function applySuggestion(draft: StatusDraft) {
-    if (!draft.suggested_action || !draft.suggested_type) return
-    if (draft.suggested_type === 'task') {
-      const { error } = await supabase.from('tasks').insert({ customer_id: draft.customer_id, title: draft.suggested_action })
-      if (error) { setErrorMsg(error.message); return }
+  // A suggestion's fate is a separate decision from the status text itself —
+  // Nick can approve/dismiss the status independently of whether he acts on any
+  // of its suggestions, so this never touches status_drafts.status/reviewed_*.
+  // A single draft can have zero, one, or several suggestions attached (see
+  // status_draft_suggestions), each actioned independently here.
+  //
+  // kind = 'create' -> insert a new task/milestone/blocker.
+  // kind = 'close'  -> mark an EXISTING task Done or milestone completed.
+  async function applySuggestion(suggestion: StatusDraftSuggestion) {
+    if (suggestion.kind === 'close') {
+      if (suggestion.type === 'task') {
+        if (!suggestion.target_id) { setErrorMsg('This close suggestion is missing its target task.'); return }
+        const { error } = await supabase.from('tasks').update({ status: 'Done' }).eq('id', suggestion.target_id)
+        if (error) { setErrorMsg(error.message); return }
+      } else if (suggestion.type === 'milestone') {
+        if (!suggestion.target_key) { setErrorMsg('This close suggestion is missing its target milestone.'); return }
+        const customer = customers.find((c) => c.id === suggestion.customer_id)
+        if (!customer) { setErrorMsg('Could not find that customer to close the milestone on.'); return }
+        const updated = customer.milestones.map((m) => (m.key === suggestion.target_key ? { ...m, completed: true } : m))
+        const { error } = await supabase.from('customers').update({ milestones: updated }).eq('id', customer.id)
+        if (error) { setErrorMsg(error.message); return }
+      } else {
+        setErrorMsg('Blockers cannot be closed via a suggestion — resolve them directly in the Blockers tab.')
+        return
+      }
     } else {
-      const customer = customers.find((c) => c.id === draft.customer_id)
-      if (!customer) { setErrorMsg('Could not find that customer to add the milestone to.'); return }
-      const newMilestone: Milestone = { key: `m_${Date.now()}`, label: draft.suggested_action, completed: false }
-      const { error } = await supabase.from('customers').update({ milestones: [...customer.milestones, newMilestone] }).eq('id', customer.id)
-      if (error) { setErrorMsg(error.message); return }
+      if (suggestion.type === 'task') {
+        const { error } = await supabase.from('tasks').insert({ customer_id: suggestion.customer_id, title: suggestion.action })
+        if (error) { setErrorMsg(error.message); return }
+      } else if (suggestion.type === 'milestone') {
+        const customer = customers.find((c) => c.id === suggestion.customer_id)
+        if (!customer) { setErrorMsg('Could not find that customer to add the milestone to.'); return }
+        const newMilestone: Milestone = { key: `m_${Date.now()}`, label: suggestion.action, completed: false }
+        const { error } = await supabase.from('customers').update({ milestones: [...customer.milestones, newMilestone] }).eq('id', customer.id)
+        if (error) { setErrorMsg(error.message); return }
+      } else {
+        const { error } = await supabase.from('blockers').insert({
+          customer_id: suggestion.customer_id,
+          title: suggestion.action,
+          type: suggestion.blocker_type ?? 'Internal',
+        })
+        if (error) { setErrorMsg(error.message); return }
+      }
     }
-    const { error: draftErr } = await supabase.from('status_drafts').update({ suggested_status: 'applied' }).eq('id', draft.id)
-    if (draftErr) setErrorMsg(draftErr.message); else loadAll()
+
+    const { error: sugErr } = await supabase.from('status_draft_suggestions').update({ status: 'applied' }).eq('id', suggestion.id)
+    if (sugErr) setErrorMsg(sugErr.message); else loadAll()
   }
-  async function dismissSuggestion(draft: StatusDraft) {
-    const { error } = await supabase.from('status_drafts').update({ suggested_status: 'dismissed' }).eq('id', draft.id)
+  async function dismissSuggestion(suggestion: StatusDraftSuggestion) {
+    const { error } = await supabase.from('status_draft_suggestions').update({ status: 'dismissed' }).eq('id', suggestion.id)
     if (error) setErrorMsg(error.message); else loadAll()
   }
   async function updateMilestone(customer: Customer, key: string, patch: Partial<Milestone>) {
@@ -222,6 +270,11 @@ export default function Dashboard({ session }: { session: Session }) {
   const filteredUpdates = updates.filter((u) => customerFilter === 'all' || u.customer_id === customerFilter)
   const filteredSpotlight = spotlight.filter((s) => customerFilter === 'all' || s.customer_id === customerFilter)
   const filteredNotes = notes.filter((n) => customerFilter === 'all' || n.customer_id === customerFilter)
+  const sortedFilteredBlockers = [...filteredBlockers].sort((a, b) => {
+    if (!!a.resolved_at !== !!b.resolved_at) return a.resolved_at ? 1 : -1
+    if (!a.resolved_at) return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+    return new Date(b.resolved_at as string).getTime() - new Date(a.resolved_at as string).getTime()
+  })
 
   const pendingDrafts = statusDrafts.filter((d) => d.status === 'pending')
   const openTasks = tasks.filter((t) => t.status !== 'Done')
@@ -245,11 +298,23 @@ export default function Dashboard({ session }: { session: Session }) {
     if (!dateStr) return 'empty'
     return isPastOrToday(dateStr) ? 'done' : 'scheduled'
   }
+  function visibleStages(c: Customer) {
+    const hidden = c.hidden_stages ?? []
+    return STAGES.filter((s) => !hidden.includes(s.key as string))
+  }
+  function hiddenStages(c: Customer) {
+    const hidden = c.hidden_stages ?? []
+    return STAGES.filter((s) => hidden.includes(s.key as string))
+  }
   function progress(c: Customer) {
     // Only count a stage as complete once its date has actually occurred —
-    // a future-dated (planned) stage isn't "done" yet, just scheduled.
-    const done = STAGES.filter((s) => stageState(c[s.key] as string | null) === 'done').length
-    return Math.round((done / STAGES.length) * 100)
+    // a future-dated (planned) stage isn't "done" yet, just scheduled. Stages the
+    // customer has hidden (e.g. MO conclusion for termed/established accounts)
+    // don't count toward the denominator either.
+    const stages = visibleStages(c)
+    if (stages.length === 0) return 0
+    const done = stages.filter((s) => stageState(c[s.key] as string | null) === 'done').length
+    return Math.round((done / stages.length) * 100)
   }
 
   function daysSince(iso: string) {
@@ -277,6 +342,22 @@ export default function Dashboard({ session }: { session: Session }) {
     const nearGoLive = c.go_live ? (() => { const d = daysUntil(c.go_live as string); return d >= 0 && d <= 7 && progress(c) < 100 })() : false
     return stale || hasOpenBlockers || nearGoLive
   }
+  // Same signal as needsAttention(), spelled out as human-readable reasons for the
+  // Overview "Needs attention" panel — so it's obvious *why* a customer is flagged.
+  function needsAttentionReasons(c: Customer): string[] {
+    const reasons: string[] = []
+    if (freshness(c.id) === 'stale') {
+      const latest = latestSpotlightFor(c.id)
+      reasons.push(latest ? `No status update in ${daysSince(latest.created_at)}d` : 'No status ever logged')
+    }
+    const openForCustomer = blockers.filter((b) => b.customer_id === c.id && !b.resolved_at)
+    if (openForCustomer.length > 0) reasons.push(`${openForCustomer.length} open blocker${openForCustomer.length > 1 ? 's' : ''}`)
+    if (c.go_live) {
+      const d = daysUntil(c.go_live as string)
+      if (d >= 0 && d <= 7 && progress(c) < 100) reasons.push(`Go-live in ${d}d at ${progress(c)}%`)
+    }
+    return reasons
+  }
   function progressTier(pct: number) {
     if (pct < 34) return 'low'
     if (pct < 67) return 'mid'
@@ -285,6 +366,107 @@ export default function Dashboard({ session }: { session: Session }) {
   function statusSlug(status: Task['status']) {
     return status.toLowerCase().replace(/\s+/g, '-')
   }
+
+  // Groups customers by who currently "has the ball" (latest spotlight owner) — the
+  // "With customer" bucket is literally the chase list: who's waiting on the customer.
+  function ballBuckets() {
+    const buckets: { us: Customer[]; customer: Customer[]; both: Customer[]; none: Customer[] } = { us: [], customer: [], both: [], none: [] }
+    for (const c of customers) {
+      const who = (latestSpotlightFor(c.id)?.owner ?? '').toLowerCase()
+      if (who === 'us') buckets.us.push(c)
+      else if (who === 'customer') buckets.customer.push(c)
+      else if (who === 'both') buckets.both.push(c)
+      else buckets.none.push(c)
+    }
+    return buckets
+  }
+
+  // Count of status (spotlight) entries per calendar week, oldest to newest, for the
+  // Overview cadence chart — a quick read on whether the daily-touchpoint habit is
+  // holding or slipping over time, not just today's snapshot.
+  function weeklyCadence(weeks = 8) {
+    const startOfThisWeek = new Date()
+    startOfThisWeek.setHours(0, 0, 0, 0)
+    startOfThisWeek.setDate(startOfThisWeek.getDate() - startOfThisWeek.getDay())
+    const buckets: { label: string; count: number }[] = []
+    for (let i = weeks - 1; i >= 0; i--) {
+      const weekStart = new Date(startOfThisWeek)
+      weekStart.setDate(weekStart.getDate() - i * 7)
+      const weekEnd = new Date(weekStart)
+      weekEnd.setDate(weekEnd.getDate() + 7)
+      const count = spotlight.filter((s) => {
+        const t = new Date(s.created_at).getTime()
+        return t >= weekStart.getTime() && t < weekEnd.getTime()
+      }).length
+      buckets.push({ label: `${weekStart.getMonth() + 1}/${weekStart.getDate()}`, count })
+    }
+    return buckets
+  }
+
+  function blockerAgeDays(b: Blocker) {
+    return daysSince(b.created_at)
+  }
+  // Only flags Open/In Progress tasks that haven't moved in a while — To Do items
+  // haven't been picked up yet (not stalled), Done items don't need chasing.
+  function taskStalledDays(t: Task): number | null {
+    if (t.status !== 'Open' && t.status !== 'In Progress') return null
+    const d = daysSince(t.updated_at)
+    return d >= 3 ? d : null
+  }
+  // Customers whose most recent status_drafts row (any status — pending, approved, or
+  // dismissed) is missing or more than ~2 days old, i.e. the daily-status-drafts
+  // scheduled task appears to have skipped them (e.g. Jangl's missing Slack mapping,
+  // or a run failure) — surfaced so gaps in the automation don't go unnoticed.
+  function draftCoverageGaps(): { customer: Customer; daysSince: number | null }[] {
+    return customers
+      .map((c) => {
+        const drafts = statusDrafts.filter((d) => d.customer_id === c.id)
+        if (drafts.length === 0) return { customer: c, daysSince: null as number | null }
+        const latest = drafts.reduce((a, b) => (new Date(a.created_at) > new Date(b.created_at) ? a : b))
+        return { customer: c, daysSince: daysSince(latest.created_at) }
+      })
+      .filter((g) => g.daysSince === null || g.daysSince >= 2)
+  }
+
+  // Plain-text weekly digest — every customer's latest status + open blockers,
+  // formatted to paste straight into an email or Slack update for stakeholders.
+  function buildDigest() {
+    const lines: string[] = [`Status digest — ${new Date().toLocaleDateString()}`, '']
+    for (const c of customers) {
+      const latest = latestSpotlightFor(c.id)
+      const openForCustomer = blockers.filter((b) => b.customer_id === c.id && !b.resolved_at)
+      lines.push(`${c.name} (${progress(c)}% complete)`)
+      lines.push(latest ? `  Status (${latest.owner ?? 'Unknown'}, ${timeAgo(latest.created_at)}): ${latest.text}` : '  No status logged yet')
+      if (openForCustomer.length > 0) lines.push(`  Blockers: ${openForCustomer.map((b) => b.title).join('; ')}`)
+      lines.push('')
+    }
+    return lines.join('\n')
+  }
+  async function copyDigest() {
+    try {
+      await navigator.clipboard.writeText(buildDigest())
+      setDigestCopied(true)
+      setTimeout(() => setDigestCopied(false), 2000)
+    } catch {
+      setErrorMsg('Could not copy digest to clipboard.')
+    }
+  }
+
+  const attentionCustomers = customers.filter((c) => needsAttention(c))
+  const sortedStatusCustomers = [...customers].sort((a, b) => {
+    const aAttn = needsAttention(a) ? 0 : 1
+    const bAttn = needsAttention(b) ? 0 : 1
+    if (aAttn !== bAttn) return aAttn - bAttn
+    const order: Record<'stale' | 'aging' | 'fresh', number> = { stale: 0, aging: 1, fresh: 2 }
+    const fa = order[freshness(a.id)]
+    const fb = order[freshness(b.id)]
+    if (fa !== fb) return fa - fb
+    return a.name.localeCompare(b.name)
+  })
+  const cadenceData = weeklyCadence()
+  const ballGroups = ballBuckets()
+  const progressRankRows = customers.map((c) => ({ customer: c, pct: progress(c) }))
+  const draftGaps = draftCoverageGaps()
 
   const visibleNav = NAV.filter((n) => !n.adminOnly || isAdmin)
 
@@ -341,19 +523,29 @@ export default function Dashboard({ session }: { session: Session }) {
                   <div className="stat-card"><div className="num">{openTasks.length}</div><div className="label">Open tasks</div></div>
                   <div className="stat-card danger"><div className="num">{openBlockers.length}</div><div className="label">Open blockers</div></div>
                   <div className="stat-card warn"><div className="num">{upcomingGoLive.length}</div><div className="label">Go-lives (next 30d)</div></div>
+                  <div className={attentionCustomers.length > 0 ? 'stat-card danger' : 'stat-card'}><div className="num">{attentionCustomers.length}</div><div className="label">Needs attention</div></div>
                 </div>
 
-                <div className="section-title">Status</div>
+                <div className="section-title">Needs attention</div>
+                <AttentionPanel customers={attentionCustomers} reasons={needsAttentionReasons} onOpen={(id) => { setTab('customers'); setExpanded(id) }} />
+
+                <div className="section-title">Who has the ball</div>
+                <BallBoard buckets={ballGroups} />
+
+                <div className="status-section-head">
+                  <div className="section-title">Status</div>
+                  <button className={digestCopied ? 'digest-btn copied' : 'digest-btn'} onClick={copyDigest}>{digestCopied ? 'Copied!' : 'Copy status digest'}</button>
+                </div>
                 <div className="status-table">
                   <div className="status-head">
                     <span>Customer</span><span>With</span><span>Current status</span><span>Updated</span>
                   </div>
-                  {customers.map((c) => {
+                  {sortedStatusCustomers.map((c) => {
                     const latest = latestSpotlightFor(c.id)
                     return (
                       <div key={c.id} className="status-row" onClick={() => { setTab('customers'); setExpanded(c.id) }}>
                         <span className="status-cust">
-                          <span className={`freshness-dot ${freshness(c.id)}`} title={`Freshness: ${freshness(c.id)}`} />
+                          <FreshnessBadge freshness={freshness(c.id)} days={latest ? daysSince(latest.created_at) : null} />
                           {c.name}
                           {needsAttention(c) && <AlertCircle size={12} className="attention-icon" />}
                         </span>
@@ -374,6 +566,9 @@ export default function Dashboard({ session }: { session: Session }) {
                     )
                   })}
                 </div>
+
+                <div className="section-title">Status update cadence (last 8 weeks)</div>
+                <CadenceChart data={cadenceData} />
 
                                 <div className="section-title">Upcoming go-lives</div>
                 <div className="list">
@@ -400,11 +595,15 @@ export default function Dashboard({ session }: { session: Session }) {
                     </div>
                   ))}
                 </div>
+
+                <div className="section-title">Progress ranking</div>
+                <ProgressRanking rows={progressRankRows} />
               </>
             )}
 
             {tab === 'review' && (
               <>
+                <CoverageGapBanner gaps={draftGaps} />
                 {pendingDrafts.length === 0 ? (
                   <p className="muted">All caught up — no drafts waiting on review.</p>
                 ) : (
@@ -413,6 +612,7 @@ export default function Dashboard({ session }: { session: Session }) {
                       <DraftCard
                         key={d.id}
                         draft={d}
+                        suggestions={suggestions.filter((s) => s.draft_id === d.id)}
                         customerName={customerName(d.customer_id)}
                         canEdit={canEdit}
                         onApprove={approveDraft}
@@ -435,7 +635,9 @@ export default function Dashboard({ session }: { session: Session }) {
                             <span>{d.reviewed_by} · {d.reviewed_at ? new Date(d.reviewed_at).toLocaleString() : ''}</span>
                           </div>
                           <div className="feed-text">{d.proposed_text}</div>
-                          <SuggestionBlock draft={d} canEdit={canEdit} onApply={applySuggestion} onDismiss={dismissSuggestion} />
+                          {suggestions.filter((s) => s.draft_id === d.id).map((s) => (
+                            <SuggestionBlock key={s.id} suggestion={s} canEdit={canEdit} onApply={applySuggestion} onDismiss={dismissSuggestion} />
+                          ))}
                         </div>
                       ))}
                     </div>
@@ -489,11 +691,20 @@ export default function Dashboard({ session }: { session: Session }) {
                             )}
 
                             <div className="stage-grid">
-                              {STAGES.map((s) => {
+                              {visibleStages(c).map((s) => {
                                 const val = (c[s.key] as string) || ''
                                 const state = stageState(val || null)
                                 return (
                                   <div key={String(s.key)} className={`stage ${state}`}>
+                                    {canEdit && (
+                                      <button
+                                        className="stage-hide-btn"
+                                        title={`Hide "${s.label}" for ${c.name} (doesn't apply — can restore anytime)`}
+                                        onClick={() => toggleStage(c, String(s.key), true)}
+                                      >
+                                        <X size={10} />
+                                      </button>
+                                    )}
                                     <span className="stage-label">{s.label}</span>
                                     {canEdit ? (
                                       <DateField
@@ -514,6 +725,21 @@ export default function Dashboard({ session }: { session: Session }) {
                               <span><span className="legend-dot scheduled" /> Scheduled</span>
                               <span><span className="legend-dot done" /> Done</span>
                             </div>
+                            {canEdit && hiddenStages(c).length > 0 && (
+                              <div className="hidden-stages">
+                                <span className="muted">Hidden — doesn't apply to this customer:</span>
+                                {hiddenStages(c).map((s) => (
+                                  <button
+                                    key={String(s.key)}
+                                    className="chip-btn"
+                                    title={`Restore "${s.label}" for ${c.name}`}
+                                    onClick={() => toggleStage(c, String(s.key), false)}
+                                  >
+                                    + {s.label}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
                             {c.milestones.length > 0 && (
                               <div className="milestones">
                                 <h4>Milestones</h4>
@@ -541,7 +767,7 @@ export default function Dashboard({ session }: { session: Session }) {
                             )}
 
                             <div className="milestones">
-                              <h4>Status <span className={`freshness-dot ${freshness(c.id)}`} title={`Freshness: ${freshness(c.id)}`} /></h4>
+                              <h4>Status <FreshnessBadge freshness={freshness(c.id)} days={latestSpotlightFor(c.id) ? daysSince(latestSpotlightFor(c.id)!.created_at) : null} /></h4>
                               {spotlight
                                 .filter((s) => s.customer_id === c.id)
                                 .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
@@ -598,19 +824,23 @@ export default function Dashboard({ session }: { session: Session }) {
                     return (
                       <div key={status} className="kanban-col">
                         <div className={`kanban-col-title status-${statusSlug(status)}`}><span>{status}</span><span>{col.length}</span></div>
-                        {col.map((t) => (
-                          <div key={t.id} className="task-card">
-                            <div className="cust">{customerName(t.customer_id)}</div>
-                            <div className="title">{t.title}</div>
-                            <select value={t.status} disabled={!canEdit} onChange={(e) => setTaskStatus(t.id, e.target.value as Task['status'])}>
-                              <option value="To Do">To Do</option>
-                              <option value="Open">Open</option>
-                              <option value="In Progress">In Progress</option>
-                              <option value="Done">Done</option>
-                            </select>
-                            {t.owner && <div className="owner">{t.owner}</div>}
-                          </div>
-                        ))}
+                        {col.map((t) => {
+                          const stalled = taskStalledDays(t)
+                          return (
+                            <div key={t.id} className="task-card">
+                              <div className="cust">{customerName(t.customer_id)}</div>
+                              <div className="title">{t.title}</div>
+                              <select value={t.status} disabled={!canEdit} onChange={(e) => setTaskStatus(t.id, e.target.value as Task['status'])}>
+                                <option value="To Do">To Do</option>
+                                <option value="Open">Open</option>
+                                <option value="In Progress">In Progress</option>
+                                <option value="Done">Done</option>
+                              </select>
+                              {t.owner && <div className="owner">{t.owner}</div>}
+                              {stalled != null && <div className="stale-badge"><AgeBadge days={stalled} label="stalled" /></div>}
+                            </div>
+                          )
+                        })}
                       </div>
                     )
                   })}
@@ -621,21 +851,25 @@ export default function Dashboard({ session }: { session: Session }) {
             {tab === 'blockers' && (
               <>
                 {canEdit && <AddRow customers={customers} onAdd={addBlocker} placeholder="New blocker title" />}
+                <p className="muted tab-hint">Open blockers are sorted oldest-first — the ones that have been sitting longest need chasing most.</p>
                 <div className="list">
-                  {filteredBlockers.map((b) => (
+                  {sortedFilteredBlockers.map((b) => (
                     <div key={b.id} className={b.resolved_at ? 'blocker-card resolved' : 'blocker-card'}>
                       <div className="blocker-top">
                         <div>
                           <div className="blocker-cust">{customerName(b.customer_id)}{b.type ? ` · ${b.type}` : ''}</div>
                           <div className="blocker-title">{b.title}</div>
                         </div>
-                        <button
-                          className={b.resolved_at ? 'pill resolved' : 'pill open'}
-                          disabled={!canEdit}
-                          onClick={() => toggleBlockerResolved(b)}
-                        >
-                          {b.resolved_at ? 'Resolved' : 'Open'}
-                        </button>
+                        <div className="blocker-actions">
+                          <button
+                            className={b.resolved_at ? 'pill resolved' : 'pill open'}
+                            disabled={!canEdit}
+                            onClick={() => toggleBlockerResolved(b)}
+                          >
+                            {b.resolved_at ? 'Resolved' : 'Open'}
+                          </button>
+                          {!b.resolved_at && <AgeBadge days={blockerAgeDays(b)} label="open" />}
+                        </div>
                       </div>
                       {b.detail && <div className="blocker-detail">{b.detail}</div>}
                       <div className="blocker-meta">Raised {new Date(b.created_at).toLocaleDateString()}{b.resolved_at ? ` · Resolved ${new Date(b.resolved_at).toLocaleDateString()}` : ''}</div>
@@ -764,6 +998,120 @@ function timeAgo(iso: string) {
   return new Date(iso).toLocaleDateString()
 }
 
+function FreshnessBadge({ freshness, days }: { freshness: 'fresh' | 'aging' | 'stale'; days: number | null }) {
+  return (
+    <span className="freshness-wrap" title={`Freshness: ${freshness}`}>
+      <span className={`freshness-dot ${freshness}`} />
+      <span className="freshness-days">{days == null ? 'never' : `${days}d`}</span>
+    </span>
+  )
+}
+
+function AgeBadge({ days, label }: { days: number; label: string }) {
+  const tier = days >= 14 ? 'danger' : days >= 7 ? 'warn' : 'ok'
+  return <span className={`age-badge ${tier}`}>{days}d {label}</span>
+}
+
+function AttentionPanel({
+  customers,
+  reasons,
+  onOpen,
+}: {
+  customers: Customer[]
+  reasons: (c: Customer) => string[]
+  onOpen: (id: string) => void
+}) {
+  if (customers.length === 0) return <p className="muted">Nothing needs attention right now — nice.</p>
+  return (
+    <div className="list">
+      {customers.map((c) => (
+        <div key={c.id} className="attention-card" onClick={() => onOpen(c.id)}>
+          <div className="attention-top">
+            <span className="feed-cust">{c.name}</span>
+            <span className="muted">{c.owner ?? 'Unassigned'}</span>
+          </div>
+          <div className="attention-reasons">
+            {reasons(c).map((r, i) => <span key={i} className="attention-reason-chip">{r}</span>)}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function BallBoard({ buckets }: { buckets: { us: Customer[]; customer: Customer[]; both: Customer[]; none: Customer[] } }) {
+  return (
+    <div className="ball-grid">
+      <div className="ball-card customer">
+        <div className="ball-count">{buckets.customer.length}</div>
+        <div className="ball-label">Waiting on customer</div>
+        <div className="ball-names">{buckets.customer.map((c) => c.name).join(', ') || '—'}</div>
+      </div>
+      <div className="ball-card us">
+        <div className="ball-count">{buckets.us.length}</div>
+        <div className="ball-label">Waiting on us</div>
+        <div className="ball-names">{buckets.us.map((c) => c.name).join(', ') || '—'}</div>
+      </div>
+      <div className="ball-card both">
+        <div className="ball-count">{buckets.both.length}</div>
+        <div className="ball-label">In progress, both sides</div>
+        <div className="ball-names">{buckets.both.map((c) => c.name).join(', ') || '—'}</div>
+      </div>
+      <div className="ball-card none">
+        <div className="ball-count">{buckets.none.length}</div>
+        <div className="ball-label">No status logged</div>
+        <div className="ball-names">{buckets.none.map((c) => c.name).join(', ') || '—'}</div>
+      </div>
+    </div>
+  )
+}
+
+function CadenceChart({ data }: { data: { label: string; count: number }[] }) {
+  const max = Math.max(1, ...data.map((d) => d.count))
+  return (
+    <div className="cadence-chart">
+      {data.map((d, i) => (
+        <div key={i} className="cadence-col">
+          <div className="cadence-bar-track">
+            <div className="cadence-bar-fill" style={{ height: `${(d.count / max) * 100}%` }} title={`${d.count} status updates`} />
+          </div>
+          <div className="cadence-count">{d.count}</div>
+          <div className="cadence-label">{d.label}</div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function ProgressRanking({ rows }: { rows: { customer: Customer; pct: number }[] }) {
+  const sorted = [...rows].sort((a, b) => a.pct - b.pct)
+  return (
+    <div className="rank-list">
+      {sorted.map(({ customer, pct }) => (
+        <div key={customer.id} className="rank-row">
+          <span className="rank-name">{customer.name}</span>
+          <div className="progress-track rank-track"><div className={`progress-fill ${pct < 34 ? 'low' : pct < 67 ? 'mid' : 'high'}`} style={{ width: `${pct}%` }} /></div>
+          <span className="rank-pct">{pct}%</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function CoverageGapBanner({ gaps }: { gaps: { customer: Customer; daysSince: number | null }[] }) {
+  if (gaps.length === 0) return null
+  return (
+    <div className="banner gap-banner">
+      <strong>No fresh status draft: </strong>
+      {gaps.map((g, i) => (
+        <span key={g.customer.id} className="gap-chip">
+          {g.customer.name}{g.daysSince == null ? ' (never)' : ` (${g.daysSince}d)`}{i < gaps.length - 1 ? ', ' : ''}
+        </span>
+      ))}
+    </div>
+  )
+}
+
 function AddStatusRow({ customers, onAdd }: { customers: Customer[]; onAdd: (customerId: string, who: string, text: string) => void }) {
   const [customerId, setCustomerId] = useState('')
   const [who, setWho] = useState('Both')
@@ -828,6 +1176,7 @@ function CustomerNoteForm({ customerId, onAdd }: { customerId: string; onAdd: (c
 
 function DraftCard({
   draft,
+  suggestions,
   customerName,
   canEdit,
   onApprove,
@@ -836,12 +1185,13 @@ function DraftCard({
   onDismissSuggestion,
 }: {
   draft: StatusDraft
+  suggestions: StatusDraftSuggestion[]
   customerName: string
   canEdit: boolean
   onApprove: (draft: StatusDraft, text: string, owner: string) => void
   onDismiss: (draft: StatusDraft) => void
-  onApplySuggestion: (draft: StatusDraft) => void
-  onDismissSuggestion: (draft: StatusDraft) => void
+  onApplySuggestion: (suggestion: StatusDraftSuggestion) => void
+  onDismissSuggestion: (suggestion: StatusDraftSuggestion) => void
 }) {
   const [text, setText] = useState(draft.proposed_text)
   const [owner, setOwner] = useState(draft.proposed_owner)
@@ -883,7 +1233,9 @@ function DraftCard({
         </div>
       )}
 
-      <SuggestionBlock draft={draft} canEdit={canEdit} onApply={onApplySuggestion} onDismiss={onDismissSuggestion} />
+      {suggestions.map((s) => (
+        <SuggestionBlock key={s.id} suggestion={s} canEdit={canEdit} onApply={onApplySuggestion} onDismiss={onDismissSuggestion} />
+      ))}
 
       <div className="draft-edit-row">
         <select value={owner} disabled={!canEdit} onChange={(e) => setOwner(e.target.value as StatusDraft['proposed_owner'])}>
@@ -905,48 +1257,56 @@ function DraftCard({
 
 // Whether a suggestion has been acted on is tracked independently of the status
 // draft's own approve/dismiss decision, so this renders in both the pending
-// Review queue and the read-only "Recently reviewed" history below it.
+// Review queue and the read-only "Recently reviewed" history below it. A draft
+// can have zero, one, or several of these attached (status_draft_suggestions).
 function SuggestionBlock({
-  draft,
+  suggestion,
   canEdit,
   onApply,
   onDismiss,
 }: {
-  draft: StatusDraft
+  suggestion: StatusDraftSuggestion
   canEdit: boolean
-  onApply: (draft: StatusDraft) => void
-  onDismiss: (draft: StatusDraft) => void
+  onApply: (suggestion: StatusDraftSuggestion) => void
+  onDismiss: (suggestion: StatusDraftSuggestion) => void
 }) {
-  if (!draft.suggested_action) return null
+  const isClose = suggestion.kind === 'close'
+  const typeLabel = suggestion.type
+  const applyLabel = isClose
+    ? `Mark ${typeLabel} done`
+    : `Add as ${typeLabel}`
+  const appliedLabel = isClose
+    ? `Closed ${typeLabel}: ${suggestion.action}`
+    : `Added as ${typeLabel}: ${suggestion.action}`
 
-  if (draft.suggested_status === 'applied') {
+  if (suggestion.status === 'applied') {
     return (
       <div className="draft-suggestion resolved applied">
         <Check size={13} />
-        <span>Added as {draft.suggested_type ?? 'task'}: {draft.suggested_action}</span>
+        <span>{appliedLabel}</span>
       </div>
     )
   }
-  if (draft.suggested_status === 'dismissed') {
+  if (suggestion.status === 'dismissed') {
     return (
       <div className="draft-suggestion resolved dismissed">
         <X size={13} />
-        <span>Suggestion dismissed: {draft.suggested_action}</span>
+        <span>Suggestion dismissed: {suggestion.action}</span>
       </div>
     )
   }
 
   return (
-    <div className="draft-suggestion">
-      <Lightbulb size={13} />
+    <div className={isClose ? 'draft-suggestion draft-suggestion-close' : 'draft-suggestion'}>
+      {isClose ? <Check size={13} /> : <Lightbulb size={13} />}
       <div className="draft-suggestion-body">
-        <span>{draft.suggested_action}</span>
+        <span>{isClose ? `Looks done: ${suggestion.action}` : suggestion.action}</span>
         {canEdit && (
           <div className="draft-suggestion-actions">
-            <button className="suggestion-apply-btn" onClick={() => onApply(draft)}>
-              Add as {draft.suggested_type ?? 'task'}
+            <button className="suggestion-apply-btn" onClick={() => onApply(suggestion)}>
+              {applyLabel}
             </button>
-            <button className="suggestion-dismiss-btn" onClick={() => onDismiss(draft)}>Dismiss</button>
+            <button className="suggestion-dismiss-btn" onClick={() => onDismiss(suggestion)}>Dismiss</button>
           </div>
         )}
       </div>
