@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { LayoutDashboard, Building2, CheckSquare, AlertTriangle, Activity, Clock, ChevronRight, ChevronDown, ClipboardCheck, Pencil, Trash2, ShieldCheck, AlertCircle, Sun, Moon, StickyNote, Lightbulb, Equal, ArrowRight, Check, X } from 'lucide-react'
 import { supabase } from './supabaseClient'
-import type { Customer, Task, Blocker, UpdateRow, Spotlight, Milestone, StatusDraft, StatusDraftSuggestion, Role, AllowedUser, Note } from './types'
+import type { Customer, Task, Blocker, UpdateRow, Spotlight, Milestone, StatusDraft, StatusDraftSuggestion, Role, AllowedUser, DashboardUser, Note } from './types'
 
 type Tab = 'overview' | 'review' | 'customers' | 'tasks' | 'blockers' | 'status' | 'updates' | 'notes' | 'users'
 
@@ -18,9 +18,9 @@ const STAGES: { key: keyof Customer; label: string }[] = [
   { key: 'mo_conclusion', label: 'MO conclusion' },
 ]
 
-const NAV: { key: Tab; label: string; icon: typeof LayoutDashboard; adminOnly?: boolean }[] = [
+const NAV: { key: Tab; label: string; icon: typeof LayoutDashboard; adminOnly?: boolean; editorOnly?: boolean }[] = [
   { key: 'overview', label: 'Overview', icon: LayoutDashboard },
-  { key: 'review', label: 'Review', icon: ClipboardCheck },
+  { key: 'review', label: 'Review', icon: ClipboardCheck, editorOnly: true },
   { key: 'customers', label: 'Customers', icon: Building2 },
   { key: 'tasks', label: 'Tasks', icon: CheckSquare },
   { key: 'blockers', label: 'Blockers', icon: AlertTriangle },
@@ -41,6 +41,7 @@ export default function Dashboard({ session }: { session: Session }) {
   const [statusDrafts, setStatusDrafts] = useState<StatusDraft[]>([])
   const [suggestions, setSuggestions] = useState<StatusDraftSuggestion[]>([])
   const [allowedUsers, setAllowedUsers] = useState<AllowedUser[]>([])
+  const [signedInUsers, setSignedInUsers] = useState<DashboardUser[]>([])
   const [myRole, setMyRole] = useState<Role | null>(null)
   const [customerFilter, setCustomerFilter] = useState<string>('all')
   const [expanded, setExpanded] = useState<string | null>(null)
@@ -96,8 +97,13 @@ export default function Dashboard({ session }: { session: Session }) {
     if (!error) setAllowedUsers(data as AllowedUser[])
   }
 
+  async function loadSignedInUsers() {
+    const { data, error } = await supabase.rpc('list_all_dashboard_users')
+    if (!error) setSignedInUsers(data as DashboardUser[])
+  }
+
   useEffect(() => { loadAll(); loadRole() }, [])
-  useEffect(() => { if (isAdmin) loadUsers() }, [isAdmin])
+  useEffect(() => { if (isAdmin) { loadUsers(); loadSignedInUsers() } }, [isAdmin])
 
   function customerName(id: string) {
     return customers.find((c) => c.id === id)?.name ?? '—'
@@ -252,17 +258,17 @@ export default function Dashboard({ session }: { session: Session }) {
   async function addAllowedUser(email: string, role: Role) {
     if (!email.trim()) return
     const { error } = await supabase.from('allowed_users').insert({ email: email.trim().toLowerCase(), role })
-    if (error) setErrorMsg(error.message); else loadUsers()
+    if (error) setErrorMsg(error.message); else { loadUsers(); loadSignedInUsers() }
   }
   async function updateUserRole(email: string, role: Role) {
     const { error } = await supabase.from('allowed_users').update({ role }).eq('email', email)
-    if (error) setErrorMsg(error.message); else loadUsers()
+    if (error) setErrorMsg(error.message); else { loadUsers(); loadSignedInUsers() }
   }
   async function removeAllowedUser(email: string) {
     if (email === session.user.email) { setErrorMsg("You can't remove your own access."); return }
-    if (!window.confirm(`Remove access for ${email}? They will be signed out and blocked from logging in again.`)) return
+    if (!window.confirm(`Remove ${email} from admin/editor access? Anyone with a @contactspace.com email can still sign in and view the dashboard read-only — this only revokes their edit/admin rights.`)) return
     const { error } = await supabase.from('allowed_users').delete().eq('email', email)
-    if (error) setErrorMsg(error.message); else loadUsers()
+    if (error) setErrorMsg(error.message); else { loadUsers(); loadSignedInUsers() }
   }
 
   const filteredTasks = tasks.filter((t) => customerFilter === 'all' || t.customer_id === customerFilter)
@@ -468,14 +474,14 @@ export default function Dashboard({ session }: { session: Session }) {
   const progressRankRows = customers.map((c) => ({ customer: c, pct: progress(c) }))
   const draftGaps = draftCoverageGaps()
 
-  const visibleNav = NAV.filter((n) => !n.adminOnly || isAdmin)
+  const visibleNav = NAV.filter((n) => (!n.adminOnly || isAdmin) && (!n.editorOnly || canEdit))
 
   return (
     <div className="app-shell">
       <aside className="sidebar">
         <div className="sidebar-brand">
           <div className="sidebar-mark" />
-          <span>Project Dashboard</span>
+          <span>Compass</span>
         </div>
         <nav className="sidebar-nav">
           {visibleNav.map(({ key, label, icon: Icon }) => (
@@ -492,6 +498,7 @@ export default function Dashboard({ session }: { session: Session }) {
             {dark ? <Sun size={14} /> : <Moon size={14} />} {dark ? 'Light mode' : 'Dark mode'}
           </button>
           <button className="sidebar-signout" onClick={() => supabase.auth.signOut()}>Sign out</button>
+          <div className="sidebar-credit">Built by Nick</div>
         </div>
       </aside>
 
@@ -937,6 +944,7 @@ export default function Dashboard({ session }: { session: Session }) {
             {tab === 'users' && isAdmin && (
               <UsersTab
                 users={allowedUsers}
+                signedInUsers={signedInUsers}
                 myEmail={session.user.email ?? ''}
                 onAdd={addAllowedUser}
                 onRoleChange={updateUserRole}
@@ -1406,12 +1414,14 @@ function EditCustomerForm({
 
 function UsersTab({
   users,
+  signedInUsers,
   myEmail,
   onAdd,
   onRoleChange,
   onRemove,
 }: {
   users: AllowedUser[]
+  signedInUsers: DashboardUser[]
   myEmail: string
   onAdd: (email: string, role: Role) => void
   onRoleChange: (email: string, role: Role) => void
@@ -1427,6 +1437,13 @@ function UsersTab({
     setRole('viewer')
   }
 
+  function grantFrom(userEmail: string) {
+    setEmail(userEmail)
+    setRole('viewer')
+  }
+
+  const unlistedUsers = signedInUsers.filter((u) => !u.role)
+
   return (
     <>
       <form className="add-row" onSubmit={submit}>
@@ -1439,6 +1456,7 @@ function UsersTab({
         <button type="submit">Grant access</button>
       </form>
 
+      <h3 className="users-subheading">Admins &amp; editors</h3>
       <div className="users-table">
         <div className="users-head">
           <span>Email</span><span>Role</span><span>Added</span><span></span>
@@ -1457,8 +1475,42 @@ function UsersTab({
             </button>
           </div>
         ))}
+        {users.length === 0 && <p className="muted">No admins or editors yet.</p>}
       </div>
-      <p className="muted users-note">Removing access blocks that email from signing in at all (enforced at login, not just data visibility).</p>
+      <p className="muted users-note">
+        Anyone with a @contactspace.com email can sign in and view the dashboard read-only. Removing someone here
+        only revokes their edit/admin rights — it does not block their login.
+      </p>
+
+      <h3 className="users-subheading">All signed-in users ({signedInUsers.length})</h3>
+      <div className="users-table users-table--signed-in">
+        <div className="users-head">
+          <span>Email</span><span>Access</span><span>Last sign-in</span><span></span>
+        </div>
+        {signedInUsers.map((u) => (
+          <div key={u.email} className="users-row">
+            <span>{u.email}{u.email === myEmail && <span className="muted"> (you)</span>}</span>
+            <span>
+              {u.role ? <span className={`role-tag role-${u.role}`}>{u.role}</span> : <span className="role-tag role-viewer">viewer (domain access)</span>}
+            </span>
+            <span className="muted">{u.last_sign_in_at ? new Date(u.last_sign_in_at).toLocaleString() : 'never'}</span>
+            <span>
+              {!u.role && (
+                <button className="icon-btn" title="Grant admin/editor access" onClick={() => grantFrom(u.email)}>
+                  <ShieldCheck size={13} />
+                </button>
+              )}
+            </span>
+          </div>
+        ))}
+        {signedInUsers.length === 0 && <p className="muted">No one has signed in yet.</p>}
+      </div>
+      {unlistedUsers.length > 0 && (
+        <p className="muted users-note">
+          {unlistedUsers.length} {unlistedUsers.length === 1 ? 'person has' : 'people have'} view-only access via the
+          @contactspace.com domain and {unlistedUsers.length === 1 ? "isn't" : "aren't"} in the admin/editor list above.
+        </p>
+      )}
     </>
   )
 }

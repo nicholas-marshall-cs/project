@@ -72,6 +72,7 @@ body {
 .sidebar-who { font-size: 0.76rem; color: var(--text-faint); padding: 0 0.5rem 0.5rem; word-break: break-all; }
 .sidebar-signout { font-size: 0.8rem; color: var(--text-muted); background: none; border: none; cursor: pointer; padding: 0.4rem 0.5rem; width: 100%; text-align: left; border-radius: var(--radius-sm); }
 .sidebar-signout:hover { background: var(--bg); color: var(--text); }
+.sidebar-credit { font-size: 0.68rem; color: var(--text-faint); padding: 0.5rem 0.5rem 0; text-align: left; letter-spacing: 0.01em; }
 
 .main { flex: 1; padding: 2rem 2.5rem; max-width: 1160px; }
 .page-header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 1.4rem; flex-wrap: wrap; gap: 0.75rem; }
@@ -292,6 +293,8 @@ th { color: var(--text-faint); font-weight: 600; font-size: 0.72rem; text-transf
 .users-row:last-child { border-bottom: none; }
 .users-row select { padding: 0.3rem 0.4rem; border-radius: 6px; border: 1px solid var(--border); font-size: 0.78rem; }
 .users-note { margin-top: 0.6rem; font-size: 0.78rem; }
+.users-subheading { margin: 1.5rem 0 0.5rem; font-size: 0.85rem; font-weight: 700; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.03em; }
+.users-table--signed-in .role-tag { font-size: 0.7rem; }
 
 /* ---------- Freshness / at-risk indicators ---------- */
 .freshness-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 0.4rem; vertical-align: middle; }

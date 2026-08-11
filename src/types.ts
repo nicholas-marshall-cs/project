@@ -127,3 +127,12 @@ export interface AllowedUser {
   role: Role
   added_at: string
 }
+
+// Every domain user who has actually signed in, whether or not they have
+// an allowed_users row. Comes from the list_all_dashboard_users RPC.
+export interface DashboardUser {
+  email: string
+  last_sign_in_at: string | null
+  account_created_at: string
+  role: Role | null
+}
