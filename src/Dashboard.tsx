@@ -1438,8 +1438,7 @@ function UsersTab({
   }
 
   function grantFrom(userEmail: string) {
-    setEmail(userEmail)
-    setRole('viewer')
+    onAdd(userEmail, 'editor')
   }
 
   const unlistedUsers = signedInUsers.filter((u) => !u.role)
@@ -1496,7 +1495,7 @@ function UsersTab({
             <span className="muted">{u.last_sign_in_at ? new Date(u.last_sign_in_at).toLocaleString() : 'never'}</span>
             <span>
               {!u.role && (
-                <button className="icon-btn" title="Grant admin/editor access" onClick={() => grantFrom(u.email)}>
+                <button className="icon-btn" title="Grant editor access (adjust role below if needed)" onClick={() => grantFrom(u.email)}>
                   <ShieldCheck size={13} />
                 </button>
               )}
