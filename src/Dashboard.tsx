@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
-import { LayoutDashboard, Building2, CheckSquare, AlertTriangle, Activity, Clock, ChevronRight, ChevronDown, ClipboardCheck, Pencil, Trash2, ShieldCheck, AlertCircle, Sun, Moon, StickyNote, Lightbulb, Equal, ArrowRight, Check, X } from 'lucide-react'
+import { LayoutDashboard, Building2, CheckSquare, AlertTriangle, Activity, Clock, ChevronRight, ChevronDown, ClipboardCheck, Pencil, Trash2, ShieldCheck, AlertCircle, Sun, Moon, StickyNote, Lightbulb, Equal, ArrowRight, Check, X, Ban, RotateCcw, UserX } from 'lucide-react'
 import { supabase } from './supabaseClient'
 import type { Customer, Task, Blocker, UpdateRow, Spotlight, Milestone, StatusDraft, StatusDraftSuggestion, Role, AllowedUser, DashboardUser, Note } from './types'
 
@@ -268,6 +268,22 @@ export default function Dashboard({ session }: { session: Session }) {
     if (email === session.user.email) { setErrorMsg("You can't remove your own access."); return }
     if (!window.confirm(`Remove ${email} from admin/editor access? Anyone with a @contactspace.com email can still sign in and view the dashboard read-only — this only revokes their edit/admin rights.`)) return
     const { error } = await supabase.from('allowed_users').delete().eq('email', email)
+    if (error) setErrorMsg(error.message); else { loadUsers(); loadSignedInUsers() }
+  }
+  async function blockUser(email: string) {
+    if (email === session.user.email) return
+    if (!window.confirm(`Block ${email} from signing in? This immediately ends their active session and stops any future login, even though they're on the @contactspace.com domain.`)) return
+    const { error } = await supabase.rpc('block_dashboard_user', { target_email: email })
+    if (error) setErrorMsg(error.message); else { loadUsers(); loadSignedInUsers() }
+  }
+  async function unblockUser(email: string) {
+    const { error } = await supabase.rpc('unblock_dashboard_user', { target_email: email })
+    if (error) setErrorMsg(error.message); else { loadUsers(); loadSignedInUsers() }
+  }
+  async function deleteUserAccount(email: string) {
+    if (email === session.user.email) return
+    if (!window.confirm(`Permanently delete the account for ${email}? This removes their login history and any admin/editor role. Since login is domain-wide, they could sign up again later unless you also block them.`)) return
+    const { error } = await supabase.rpc('delete_dashboard_user', { target_email: email })
     if (error) setErrorMsg(error.message); else { loadUsers(); loadSignedInUsers() }
   }
 
@@ -949,6 +965,9 @@ export default function Dashboard({ session }: { session: Session }) {
                 onAdd={addAllowedUser}
                 onRoleChange={updateUserRole}
                 onRemove={removeAllowedUser}
+                onBlock={blockUser}
+                onUnblock={unblockUser}
+                onDeleteAccount={deleteUserAccount}
               />
             )}
           </>
@@ -1419,6 +1438,9 @@ function UsersTab({
   onAdd,
   onRoleChange,
   onRemove,
+  onBlock,
+  onUnblock,
+  onDeleteAccount,
 }: {
   users: AllowedUser[]
   signedInUsers: DashboardUser[]
@@ -1426,6 +1448,9 @@ function UsersTab({
   onAdd: (email: string, role: Role) => void
   onRoleChange: (email: string, role: Role) => void
   onRemove: (email: string) => void
+  onBlock: (email: string) => void
+  onUnblock: (email: string) => void
+  onDeleteAccount: (email: string) => void
 }) {
   const [email, setEmail] = useState('')
   const [role, setRole] = useState<Role>('viewer')
@@ -1487,17 +1512,39 @@ function UsersTab({
           <span>Email</span><span>Access</span><span>Last sign-in</span><span></span>
         </div>
         {signedInUsers.map((u) => (
-          <div key={u.email} className="users-row">
+          <div key={u.email} className={u.blocked ? 'users-row users-row--blocked' : 'users-row'}>
             <span>{u.email}{u.email === myEmail && <span className="muted"> (you)</span>}</span>
             <span>
-              {u.role ? <span className={`role-tag role-${u.role}`}>{u.role}</span> : <span className="role-tag role-viewer">viewer (domain access)</span>}
+              {u.blocked ? (
+                <span className="role-tag role-blocked">blocked</span>
+              ) : u.role ? (
+                <span className={`role-tag role-${u.role}`}>{u.role}</span>
+              ) : (
+                <span className="role-tag role-viewer">viewer (domain access)</span>
+              )}
             </span>
             <span className="muted">{u.last_sign_in_at ? new Date(u.last_sign_in_at).toLocaleString() : 'never'}</span>
-            <span>
-              {!u.role && (
-                <button className="icon-btn" title="Grant editor access (adjust role below if needed)" onClick={() => grantFrom(u.email)}>
-                  <ShieldCheck size={13} />
+            <span className="users-row-actions">
+              {u.email === myEmail ? (
+                <span className="muted">—</span>
+              ) : u.blocked ? (
+                <button className="icon-btn" title="Unblock" onClick={() => onUnblock(u.email)}>
+                  <RotateCcw size={13} />
                 </button>
+              ) : (
+                <>
+                  {!u.role && (
+                    <button className="icon-btn" title="Grant editor access (adjust role below if needed)" onClick={() => grantFrom(u.email)}>
+                      <ShieldCheck size={13} />
+                    </button>
+                  )}
+                  <button className="icon-btn danger" title="Block from signing in" onClick={() => onBlock(u.email)}>
+                    <Ban size={13} />
+                  </button>
+                  <button className="icon-btn danger" title="Delete account entirely" onClick={() => onDeleteAccount(u.email)}>
+                    <UserX size={13} />
+                  </button>
+                </>
               )}
             </span>
           </div>

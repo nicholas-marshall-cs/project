@@ -135,4 +135,5 @@ export interface DashboardUser {
   last_sign_in_at: string | null
   account_created_at: string
   role: Role | null
+  blocked: boolean
 }
