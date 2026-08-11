@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
-import { LayoutDashboard, Building2, CheckSquare, AlertTriangle, Activity, Clock, ChevronRight, ChevronDown, ClipboardCheck, Pencil, Trash2, ShieldCheck, AlertCircle, Sun, Moon, StickyNote, Lightbulb, Equal, ArrowRight, Check, X, Ban, RotateCcw, UserX } from 'lucide-react'
+import { LayoutDashboard, Building2, CheckSquare, AlertTriangle, Activity, Clock, ChevronRight, ChevronDown, ClipboardCheck, Pencil, Trash2, ShieldCheck, AlertCircle, Sun, Moon, StickyNote, Lightbulb, Equal, ArrowRight, Check, X, Ban, RotateCcw, UserX, Search, Download } from 'lucide-react'
 import { supabase } from './supabaseClient'
 import type { Customer, Task, Blocker, UpdateRow, Spotlight, Milestone, StatusDraft, StatusDraftSuggestion, Role, AllowedUser, DashboardUser, Note } from './types'
 
@@ -44,6 +44,8 @@ export default function Dashboard({ session }: { session: Session }) {
   const [signedInUsers, setSignedInUsers] = useState<DashboardUser[]>([])
   const [myRole, setMyRole] = useState<Role | null>(null)
   const [customerFilter, setCustomerFilter] = useState<string>('all')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchOpen, setSearchOpen] = useState(false)
   const [expanded, setExpanded] = useState<string | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -104,6 +106,15 @@ export default function Dashboard({ session }: { session: Session }) {
 
   useEffect(() => { loadAll(); loadRole() }, [])
   useEffect(() => { if (isAdmin) { loadUsers(); loadSignedInUsers() } }, [isAdmin])
+
+  const searchBoxRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    function onClickOutside(e: MouseEvent) {
+      if (searchBoxRef.current && !searchBoxRef.current.contains(e.target as Node)) setSearchOpen(false)
+    }
+    document.addEventListener('mousedown', onClickOutside)
+    return () => document.removeEventListener('mousedown', onClickOutside)
+  }, [])
 
   function customerName(id: string) {
     return customers.find((c) => c.id === id)?.name ?? '—'
@@ -474,6 +485,103 @@ export default function Dashboard({ session }: { session: Session }) {
     }
   }
 
+  // Generic CSV download — escapes quotes/commas/newlines and triggers a
+  // browser download, no backend involved. Used by every "Export CSV" button.
+  function downloadCsv(filename: string, rows: (string | number)[][]) {
+    const escapeCell = (v: string | number) => {
+      const s = String(v ?? '')
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+    }
+    const csv = rows.map((r) => r.map(escapeCell).join(',')).join('\n')
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
+  const todayStamp = () => new Date().toISOString().slice(0, 10)
+
+  // One row per customer — the full health snapshot (progress, current status,
+  // open work, attention flag) for handing to management outside the app.
+  function exportHealthReportCsv() {
+    const header = ['Customer', 'Owner', 'Type', 'Progress %', 'Status owner', 'Latest status', 'Status age (days)', 'Open tasks', 'Open blockers', 'Go-live', 'Needs attention', 'Attention reasons']
+    const rows = customers.map((c) => {
+      const latest = latestSpotlightFor(c.id)
+      const openT = tasks.filter((t) => t.customer_id === c.id && t.status !== 'Done').length
+      const openB = blockers.filter((b) => b.customer_id === c.id && !b.resolved_at).length
+      return [
+        c.name, c.owner ?? '', c.type ?? '', progress(c),
+        latest?.owner ?? '', latest?.text ?? '', latest ? daysSince(latest.created_at) : '',
+        openT, openB, c.go_live ?? '', needsAttention(c) ? 'Yes' : 'No', needsAttentionReasons(c).join('; '),
+      ]
+    })
+    downloadCsv(`compass-health-report-${todayStamp()}.csv`, [header, ...rows])
+  }
+  function exportTasksCsv() {
+    const header = ['Customer', 'Title', 'Status', 'Owner', 'Created', 'Updated']
+    const rows = filteredTasks.map((t) => [customerName(t.customer_id), t.title, t.status, t.owner ?? '', t.created_at, t.updated_at])
+    downloadCsv(`compass-tasks-${todayStamp()}.csv`, [header, ...rows])
+  }
+  function exportBlockersCsv() {
+    const header = ['Customer', 'Title', 'Type', 'Detail', 'Opened', 'Resolved', 'Age (days)']
+    const rows = sortedFilteredBlockers.map((b) => [customerName(b.customer_id), b.title, b.type ?? '', b.detail ?? '', b.created_at, b.resolved_at ?? 'Open', blockerAgeDays(b)])
+    downloadCsv(`compass-blockers-${todayStamp()}.csv`, [header, ...rows])
+  }
+
+  // Global search — live client-side search across everything already loaded
+  // (all datasets here are small), grouped by type with a jump-to action per
+  // result. No extra Supabase queries needed.
+  type SearchResult = { type: string; id: string; customerId: string; label: string; snippet: string }
+  function globalSearchResults(query: string): SearchResult[] {
+    const q = query.trim().toLowerCase()
+    if (q.length < 2) return []
+    const results: SearchResult[] = []
+    for (const c of customers) {
+      if (c.name.toLowerCase().includes(q) || (c.owner ?? '').toLowerCase().includes(q) || (c.notes ?? '').toLowerCase().includes(q)) {
+        results.push({ type: 'Customer', id: c.id, customerId: c.id, label: c.name, snippet: c.notes ?? c.owner ?? '' })
+      }
+    }
+    for (const t of tasks) {
+      if (t.title.toLowerCase().includes(q)) {
+        results.push({ type: 'Task', id: t.id, customerId: t.customer_id, label: customerName(t.customer_id), snippet: t.title })
+      }
+    }
+    for (const b of blockers) {
+      if (b.title.toLowerCase().includes(q) || (b.detail ?? '').toLowerCase().includes(q)) {
+        results.push({ type: 'Blocker', id: b.id, customerId: b.customer_id, label: customerName(b.customer_id), snippet: b.title })
+      }
+    }
+    for (const s of spotlight) {
+      if (s.text.toLowerCase().includes(q)) {
+        results.push({ type: 'Status', id: s.id, customerId: s.customer_id, label: customerName(s.customer_id), snippet: s.text })
+      }
+    }
+    for (const n of notes) {
+      if (n.text.toLowerCase().includes(q)) {
+        results.push({ type: 'Note', id: n.id, customerId: n.customer_id, label: customerName(n.customer_id), snippet: n.text })
+      }
+    }
+    for (const u of updates) {
+      if (u.text.toLowerCase().includes(q)) {
+        results.push({ type: 'Update', id: u.id, customerId: u.customer_id, label: customerName(u.customer_id), snippet: u.text })
+      }
+    }
+    return results.slice(0, 30)
+  }
+  function goToSearchResult(r: SearchResult) {
+    setSearchQuery('')
+    setSearchOpen(false)
+    if (r.type === 'Task') { setTab('tasks'); setCustomerFilter(r.customerId) }
+    else if (r.type === 'Blocker') { setTab('blockers'); setCustomerFilter(r.customerId) }
+    else if (r.type === 'Update') { setTab('updates'); setCustomerFilter(r.customerId) }
+    else if (r.type === 'Status') { setTab('status'); setCustomerFilter(r.customerId) }
+    else { setTab('customers'); setExpanded(r.customerId) }
+  }
+
   const attentionCustomers = customers.filter((c) => needsAttention(c))
   const sortedStatusCustomers = [...customers].sort((a, b) => {
     const aAttn = needsAttention(a) ? 0 : 1
@@ -524,12 +632,39 @@ export default function Dashboard({ session }: { session: Session }) {
             <h1>{NAV.find((n) => n.key === tab)?.label}</h1>
             <p className="page-sub">{customers.length} customers tracked</p>
           </div>
-          {tab !== 'overview' && tab !== 'customers' && tab !== 'users' && (
-            <select className="customer-filter" value={customerFilter} onChange={(e) => setCustomerFilter(e.target.value)}>
-              <option value="all">All customers</option>
-              {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-          )}
+          <div className="page-header-actions">
+            <div className="global-search" ref={searchBoxRef}>
+              <Search size={14} className="global-search-icon" />
+              <input
+                type="text"
+                placeholder="Search everything…"
+                value={searchQuery}
+                onChange={(e) => { setSearchQuery(e.target.value); setSearchOpen(true) }}
+                onFocus={() => setSearchOpen(true)}
+              />
+              {searchOpen && searchQuery.trim().length >= 2 && (
+                <div className="global-search-results">
+                  {globalSearchResults(searchQuery).length === 0 ? (
+                    <div className="global-search-empty">No matches.</div>
+                  ) : (
+                    globalSearchResults(searchQuery).map((r) => (
+                      <button key={`${r.type}-${r.id}`} className="global-search-result" onClick={() => goToSearchResult(r)}>
+                        <span className="global-search-type">{r.type}</span>
+                        <span className="global-search-label">{r.label}</span>
+                        <span className="global-search-snippet">{r.snippet}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+            {tab !== 'overview' && tab !== 'customers' && tab !== 'users' && (
+              <select className="customer-filter" value={customerFilter} onChange={(e) => setCustomerFilter(e.target.value)}>
+                <option value="all">All customers</option>
+                {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            )}
+          </div>
         </div>
 
         {errorMsg && <div className="banner error-banner">{errorMsg}</div>}
@@ -557,7 +692,10 @@ export default function Dashboard({ session }: { session: Session }) {
 
                 <div className="status-section-head">
                   <div className="section-title">Status</div>
-                  <button className={digestCopied ? 'digest-btn copied' : 'digest-btn'} onClick={copyDigest}>{digestCopied ? 'Copied!' : 'Copy status digest'}</button>
+                  <div className="status-section-actions">
+                    <button className={digestCopied ? 'digest-btn copied' : 'digest-btn'} onClick={copyDigest}>{digestCopied ? 'Copied!' : 'Copy status digest'}</button>
+                    <button className="digest-btn" onClick={exportHealthReportCsv}><Download size={13} /> Export health report (CSV)</button>
+                  </div>
                 </div>
                 <div className="status-table">
                   <div className="status-head">
@@ -840,7 +978,10 @@ export default function Dashboard({ session }: { session: Session }) {
 
             {tab === 'tasks' && (
               <>
-                {canEdit && <AddRow customers={customers} onAdd={addTask} placeholder="New task title" />}
+                <div className="tab-toolbar">
+                  {canEdit && <AddRow customers={customers} onAdd={addTask} placeholder="New task title" />}
+                  <button className="digest-btn" onClick={exportTasksCsv}><Download size={13} /> Export CSV</button>
+                </div>
                 <div className="kanban">
                   {(['To Do', 'Open', 'In Progress', 'Done'] as Task['status'][]).map((status) => {
                     const col = filteredTasks.filter((t) => t.status === status)
@@ -873,7 +1014,10 @@ export default function Dashboard({ session }: { session: Session }) {
 
             {tab === 'blockers' && (
               <>
-                {canEdit && <AddRow customers={customers} onAdd={addBlocker} placeholder="New blocker title" />}
+                <div className="tab-toolbar">
+                  {canEdit && <AddRow customers={customers} onAdd={addBlocker} placeholder="New blocker title" />}
+                  <button className="digest-btn" onClick={exportBlockersCsv}><Download size={13} /> Export CSV</button>
+                </div>
                 <p className="muted tab-hint">Open blockers are sorted oldest-first — the ones that have been sitting longest need chasing most.</p>
                 <div className="list">
                   {sortedFilteredBlockers.map((b) => (
