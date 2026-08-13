@@ -116,6 +116,15 @@ export default function Dashboard({ session }: { session: Session }) {
     return () => document.removeEventListener('mousedown', onClickOutside)
   }, [])
 
+  // Overview stat cards jump to another tab OR, for the two sections that already
+  // live further down the Overview page itself (go-lives, needs attention), just
+  // scroll to them instead of navigating away from data that's already on screen.
+  const attentionSectionRef = useRef<HTMLDivElement>(null)
+  const goLiveSectionRef = useRef<HTMLDivElement>(null)
+  function scrollToSection(ref: { current: HTMLDivElement | null }) {
+    ref.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
   function customerName(id: string) {
     return customers.find((c) => c.id === id)?.name ?? '—'
   }
@@ -677,14 +686,27 @@ export default function Dashboard({ session }: { session: Session }) {
             {tab === 'overview' && (
               <>
                 <div className="stat-grid">
-                  <div className="stat-card accent"><div className="num">{customers.length}</div><div className="label">Customers</div></div>
-                  <div className="stat-card"><div className="num">{openTasks.length}</div><div className="label">Open tasks</div></div>
-                  <div className="stat-card danger"><div className="num">{openBlockers.length}</div><div className="label">Open blockers</div></div>
-                  <div className="stat-card warn"><div className="num">{upcomingGoLive.length}</div><div className="label">Go-lives (next 30d)</div></div>
-                  <div className={attentionCustomers.length > 0 ? 'stat-card danger' : 'stat-card'}><div className="num">{attentionCustomers.length}</div><div className="label">Needs attention</div></div>
+                  <div className="stat-card accent clickable" onClick={() => setTab('customers')}>
+                    <div className="num">{customers.length}</div><div className="label">Customers</div>
+                  </div>
+                  <div className="stat-card clickable" onClick={() => { setTab('tasks'); setCustomerFilter('all') }}>
+                    <div className="num">{openTasks.length}</div><div className="label">Open tasks</div>
+                  </div>
+                  <div className="stat-card danger clickable" onClick={() => { setTab('blockers'); setCustomerFilter('all') }}>
+                    <div className="num">{openBlockers.length}</div><div className="label">Open blockers</div>
+                  </div>
+                  <div className="stat-card warn clickable" onClick={() => scrollToSection(goLiveSectionRef)}>
+                    <div className="num">{upcomingGoLive.length}</div><div className="label">Go-lives (next 30d)</div>
+                  </div>
+                  <div
+                    className={attentionCustomers.length > 0 ? 'stat-card danger clickable' : 'stat-card clickable'}
+                    onClick={() => scrollToSection(attentionSectionRef)}
+                  >
+                    <div className="num">{attentionCustomers.length}</div><div className="label">Needs attention</div>
+                  </div>
                 </div>
 
-                <div className="section-title">Needs attention</div>
+                <div className="section-title" ref={attentionSectionRef}>Needs attention</div>
                 <AttentionPanel customers={attentionCustomers} reasons={needsAttentionReasons} onOpen={(id) => { setTab('customers'); setExpanded(id) }} />
 
                 <div className="section-title">Who has the ball</div>
@@ -731,7 +753,7 @@ export default function Dashboard({ session }: { session: Session }) {
                 <div className="section-title">Status update cadence (last 8 weeks)</div>
                 <CadenceChart data={cadenceData} />
 
-                                <div className="section-title">Upcoming go-lives</div>
+                                <div className="section-title" ref={goLiveSectionRef}>Upcoming go-lives</div>
                 <div className="list">
                   {upcomingGoLive.length === 0 && <p className="muted">Nothing in the next 30 days.</p>}
                   {upcomingGoLive.map((c) => (

@@ -111,6 +111,8 @@ body {
 .stat-card.accent .num { color: var(--accent); }
 .stat-card.warn .num { color: var(--amber); }
 .stat-card.danger .num { color: var(--red); }
+.stat-card.clickable { cursor: pointer; transition: border-color 0.12s, box-shadow 0.12s; }
+.stat-card.clickable:hover { border-color: #c7d2fe; box-shadow: 0 2px 6px rgba(0,0,0,0.06); }
 
 .section-title { font-size: 0.95rem; font-weight: 600; margin: 1.6rem 0 0.75rem; }
 
