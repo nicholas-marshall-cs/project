@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
-import { LayoutDashboard, Building2, CheckSquare, AlertTriangle, Activity, Clock, ChevronRight, ChevronDown, ClipboardCheck, Pencil, Trash2, ShieldCheck, AlertCircle, Sun, Moon, StickyNote, Lightbulb, Equal, ArrowRight, Check, X, Ban, RotateCcw, UserX, Search, Download } from 'lucide-react'
+import { LayoutDashboard, Building2, CheckSquare, AlertTriangle, Activity, Clock, ChevronRight, ChevronDown, ClipboardCheck, Pencil, Trash2, ShieldCheck, AlertCircle, Sun, Moon, StickyNote, Lightbulb, Equal, ArrowRight, Check, X, Ban, RotateCcw, UserX, Search, Download, TrendingUp } from 'lucide-react'
 import { supabase } from './supabaseClient'
 import type { Customer, Task, Blocker, UpdateRow, Spotlight, Milestone, StatusDraft, StatusDraftSuggestion, Role, AllowedUser, DashboardUser, Note } from './types'
 
-type Tab = 'overview' | 'review' | 'customers' | 'tasks' | 'blockers' | 'status' | 'updates' | 'notes' | 'users'
+type Tab = 'overview' | 'review' | 'customers' | 'tasks' | 'blockers' | 'status' | 'updates' | 'notes' | 'health' | 'users'
 
 const STAGES: { key: keyof Customer; label: string }[] = [
   { key: 'demo', label: 'Demo' },
@@ -27,6 +27,7 @@ const NAV: { key: Tab; label: string; icon: typeof LayoutDashboard; adminOnly?: 
   { key: 'status', label: 'Status', icon: Activity },
   { key: 'updates', label: 'Updates', icon: Clock },
   { key: 'notes', label: 'Notes', icon: StickyNote },
+  { key: 'health', label: 'Health Report', icon: TrendingUp },
   { key: 'users', label: 'Users', icon: ShieldCheck, adminOnly: true },
 ]
 
@@ -47,6 +48,7 @@ export default function Dashboard({ session }: { session: Session }) {
   const [searchQuery, setSearchQuery] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
   const [expanded, setExpanded] = useState<string | null>(null)
+  const [healthCustomerId, setHealthCustomerId] = useState<string | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
@@ -409,6 +411,69 @@ export default function Dashboard({ session }: { session: Session }) {
     return status.toLowerCase().replace(/\s+/g, '-')
   }
 
+  // ---------- Health Report (per-customer historical view) ----------
+  // Chronological stage timeline for one customer, using whichever stages have a
+  // date set — sorted by actual date, not STAGES's fixed logical order, so a stage
+  // completed "out of sequence" still shows up in the right place on the timeline.
+  function stageTimeline(c: Customer): { key: string; label: string; date: string }[] {
+    return STAGES
+      .filter((s) => !!(c[s.key] as string | null))
+      .map((s) => ({ key: String(s.key), label: s.label, date: c[s.key] as string }))
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+  }
+  // Gaps of 21+ days between consecutive completed stages — the clearest "where did
+  // things slip" signal available from the data we actually have (there's no separate
+  // planned-vs-actual date stored, so a long real gap is the best proxy for a stall).
+  function stageGaps(c: Customer): { fromLabel: string; toLabel: string; days: number }[] {
+    const timeline = stageTimeline(c)
+    const gaps: { fromLabel: string; toLabel: string; days: number }[] = []
+    for (let i = 1; i < timeline.length; i++) {
+      const days = Math.round((new Date(timeline[i].date).getTime() - new Date(timeline[i - 1].date).getTime()) / 86400000)
+      if (days >= 21) gaps.push({ fromLabel: timeline[i - 1].label, toLabel: timeline[i].label, days })
+    }
+    return gaps
+  }
+  // Every blocker this customer has ever had, oldest first, with how long it was (or
+  // has been) open — the direct answer to "where did we get stuck."
+  function blockerHistory(customerId: string): (Blocker & { durationDays: number })[] {
+    return blockers
+      .filter((b) => b.customer_id === customerId)
+      .map((b) => ({
+        ...b,
+        durationDays: b.resolved_at
+          ? Math.round((new Date(b.resolved_at).getTime() - new Date(b.created_at).getTime()) / 86400000)
+          : daysSince(b.created_at),
+      }))
+      .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+  }
+  // Gaps of 7+ days between consecutive status updates — periods where the customer
+  // effectively went dark from a reporting standpoint.
+  function silenceGaps(customerId: string): { from: string; to: string; days: number }[] {
+    const rows = spotlight
+      .filter((s) => s.customer_id === customerId)
+      .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+    const gaps: { from: string; to: string; days: number }[] = []
+    for (let i = 1; i < rows.length; i++) {
+      const days = Math.round((new Date(rows[i].created_at).getTime() - new Date(rows[i - 1].created_at).getTime()) / 86400000)
+      if (days >= 7) gaps.push({ from: rows[i - 1].created_at, to: rows[i].created_at, days })
+    }
+    return gaps
+  }
+  // Human-readable "where did things slip" flags for one customer, pulled together
+  // from stage gaps, blocker duration, and status silence — the core answer to
+  // David's ask: open a project, see where it broke down, without re-reading every row.
+  function healthRiskFlags(c: Customer): string[] {
+    const flags: string[] = []
+    for (const g of stageGaps(c)) flags.push(`${g.days}-day gap between "${g.fromLabel}" and "${g.toLabel}"`)
+    for (const b of blockerHistory(c.id)) {
+      if (b.durationDays >= 14) flags.push(`Blocker ${b.resolved_at ? 'was' : 'has been'} open ${b.durationDays}d: "${b.title}"`)
+    }
+    for (const g of silenceGaps(c.id)) flags.push(`${g.days}-day silence in status updates (${new Date(g.from).toLocaleDateString()} → ${new Date(g.to).toLocaleDateString()})`)
+    const stalled = tasks.filter((t) => t.customer_id === c.id && taskStalledDays(t) !== null)
+    if (stalled.length > 0) flags.push(`${stalled.length} task${stalled.length > 1 ? 's' : ''} stalled 3+ days with no update`)
+    return flags
+  }
+
   // Groups customers by who currently "has the ball" (latest spotlight owner) — the
   // "With customer" bucket is literally the chase list: who's waiting on the customer.
   function ballBuckets() {
@@ -667,7 +732,7 @@ export default function Dashboard({ session }: { session: Session }) {
                 </div>
               )}
             </div>
-            {tab !== 'overview' && tab !== 'customers' && tab !== 'users' && (
+            {tab !== 'overview' && tab !== 'customers' && tab !== 'health' && tab !== 'users' && (
               <select className="customer-filter" value={customerFilter} onChange={(e) => setCustomerFilter(e.target.value)}>
                 <option value="all">All customers</option>
                 {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -1120,6 +1185,120 @@ export default function Dashboard({ session }: { session: Session }) {
                   ))}
                   {filteredNotes.length === 0 && <p className="muted">No notes yet.</p>}
                 </div>
+              </>
+            )}
+
+            {tab === 'health' && (
+              <>
+                {!healthCustomerId ? (
+                  <>
+                    <p className="muted tab-hint">Pick a customer to see its historical health — rollout timeline, blocker duration, and where updates went quiet. Sorted worst-first.</p>
+                    <div className="customer-grid">
+                      {[...customers]
+                        .sort((a, b) => healthRiskFlags(b).length - healthRiskFlags(a).length)
+                        .map((c) => {
+                          const flagCount = healthRiskFlags(c).length
+                          return (
+                            <div key={c.id} className={`customer-card type-${c.type ?? 'none'}`} onClick={() => setHealthCustomerId(c.id)}>
+                              <div className="customer-card-top">
+                                <h3>{c.name}</h3>
+                                {flagCount > 0 && <span className="attention-reason-chip">{flagCount} flag{flagCount > 1 ? 's' : ''}</span>}
+                              </div>
+                              <div className="customer-owner">{c.owner ?? 'Unassigned'}</div>
+                              <div className="progress-track"><div className={`progress-fill ${progressTier(progress(c))}`} style={{ width: `${progress(c)}%` }} /></div>
+                              <div className="progress-label"><span>{progress(c)}% complete</span>{flagCount === 0 && <span className="muted">No flags</span>}</div>
+                            </div>
+                          )
+                        })}
+                    </div>
+                  </>
+                ) : (() => {
+                  const c = customers.find((cust) => cust.id === healthCustomerId)
+                  if (!c) return <p className="muted">Customer not found.</p>
+                  const flags = healthRiskFlags(c)
+                  const timeline = stageTimeline(c)
+                  const bHistory = blockerHistory(c.id)
+                  const custSpotlight = spotlight.filter((s) => s.customer_id === c.id).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+                  return (
+                    <>
+                      <button className="digest-btn" onClick={() => setHealthCustomerId(null)}>← All customers</button>
+
+                      <div className="page-header" style={{ marginTop: '1.1rem', marginBottom: '0.25rem' }}>
+                        <div>
+                          <h2 style={{ margin: 0 }}>{c.name}</h2>
+                          <p className="page-sub">{c.owner ?? 'Unassigned'} · {progress(c)}% complete{c.go_live ? <> · <GoLiveBadge date={c.go_live} /></> : null}</p>
+                        </div>
+                      </div>
+
+                      <div className="section-title">Where things slipped</div>
+                      {flags.length === 0 ? (
+                        <p className="muted">No red flags — no long stage gaps, no long-open blockers, no silence periods.</p>
+                      ) : (
+                        <div className="list">
+                          {flags.map((f, i) => (
+                            <div key={i} className="attention-card">
+                              <div className="attention-reasons"><span className="attention-reason-chip">{f}</span></div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      <div className="section-title">Rollout timeline</div>
+                      {timeline.length === 0 ? (
+                        <p className="muted">No stage dates recorded yet.</p>
+                      ) : (
+                        <div className="list">
+                          {timeline.map((s, i) => {
+                            const gapDays = i > 0 ? Math.round((new Date(s.date).getTime() - new Date(timeline[i - 1].date).getTime()) / 86400000) : 0
+                            return (
+                              <div key={s.key} className="feed-card">
+                                <div className="feed-top">
+                                  <span className="feed-cust">{s.label}</span>
+                                  <span className="muted">{new Date(s.date).toLocaleDateString()}</span>
+                                </div>
+                                {i > 0 && gapDays >= 21 && <div className="feed-text">{gapDays} days since "{timeline[i - 1].label}"</div>}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )}
+
+                      <div className="section-title">Blocker history ({bHistory.length})</div>
+                      {bHistory.length === 0 ? (
+                        <p className="muted">No blockers ever raised for this customer.</p>
+                      ) : (
+                        <div className="list">
+                          {bHistory.map((b) => (
+                            <div key={b.id} className={b.resolved_at ? 'blocker-card resolved' : 'blocker-card'}>
+                              <div className="blocker-top">
+                                <div>
+                                  <div className="blocker-cust">{b.type ?? '—'}</div>
+                                  <div className="blocker-title">{b.title}</div>
+                                </div>
+                                <div className="blocker-actions">
+                                  <span className={b.resolved_at ? 'pill resolved' : 'pill open'}>{b.resolved_at ? `Resolved in ${b.durationDays}d` : `Open ${b.durationDays}d`}</span>
+                                </div>
+                              </div>
+                              {b.detail && <div className="blocker-detail">{b.detail}</div>}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      <div className="section-title">Status update history ({custSpotlight.length})</div>
+                      <div className="list">
+                        {custSpotlight.map((s) => (
+                          <div key={s.id} className="status-history-row">
+                            <WithBadge who={s.owner} />
+                            <span className="status-history-text">{s.text}</span>
+                            <span className="muted">{new Date(s.created_at).toLocaleDateString()}</span>
+                          </div>
+                        ))}
+                        {custSpotlight.length === 0 && <p className="muted">No status history yet.</p>}
+                      </div>
+                    </>
+                  )
+                })()}
               </>
             )}
 
