@@ -3,6 +3,8 @@
 **Last updated:** 2026-07-21
 **Purpose of this document:** a complete, self-contained record of the custom project-tracking dashboard built for Nick (contactspace.com), covering why it exists, how it's built, exactly what's in the database, how access is locked down, what the automated daily tasks do, and what's still open. Written so it can be dropped into the repo (or a fresh Claude conversation) and used as full context without needing to re-derive anything from chat history.
 
+**2026-07-27 note:** the app/site was renamed from "Project Dashboard" / "dashboard-app" to **Compass** (in-app brand, `<title>`, `package.json` name, README). References to the old name below are historical and still accurate as *history* — just stale as the current name. The Cloudflare Pages project itself is renamed separately in the dashboard (not stored in this repo); the `pages.dev` subdomain does not change.
+
 ---
 
 ## 1. Why this exists
@@ -116,7 +118,7 @@ SUPABASE_URL = 'https://cmwabhhvrdqugiokfgbs.supabase.co'
 SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_SanORzgTEJP_X-Kttogm4Q_vjGsvwiv'
 ```
 
-All tables below are in the `public` schema, RLS enabled on all of them **except `sync_state` — flagged, not yet fixed, see below.**
+All tables below are in the `public` schema, RLS enabled on all of them, including `sync_state` (fixed 2026-08-13, see below).
 
 ### `customers` (7 rows)
 | column | type | notes |
@@ -159,13 +161,8 @@ The bolded columns were added across this update:
 - `suggested_action` / `suggested_type` — an optional, lightweight suggestion (e.g. "Training session for Aeroflow", type `milestone`) surfaced alongside the draft. Written as a short label — usable verbatim as a task title or milestone label — not a full sentence. The scheduled task only ever proposes these; it never writes to `tasks` or `customers.milestones` itself.
 - `suggested_status` — null until Nick clicks a button in the app. `'applied'` means the suggestion was written to `tasks` (if `suggested_type = 'task'`) or appended to that customer's `customers.milestones` jsonb array (if `'milestone'`), with `key` auto-generated and `completed: false`, for Nick to date/complete later like any other milestone. `'dismissed'` means he declined it. This is tracked independently of the status draft's own `status`/`reviewed_*` fields — approving or dismissing the *status text* and acting on the *suggestion* are two separate decisions, and the suggestion stays actionable in "Recently reviewed" even after the status itself has been approved.
 
-### `sync_state` (6 rows) — **RLS disabled, flagged, not fixed**
-Used internally by the scheduled tasks to track sync cursors/state. Supabase's advisor flagged this table as fully exposed (readable/writable via the public API key by anyone) because RLS is off. Not remediated yet — needs a decision on the right policy (likely the same `is_company_user()` pattern as every other table) before running:
-```sql
-ALTER TABLE public.sync_state ENABLE ROW LEVEL SECURITY;
--- then add a policy, e.g.:
--- CREATE POLICY company_users_all_sync_state ON public.sync_state FOR ALL USING (is_company_user()) WITH CHECK (is_company_user());
-```
+### `sync_state` (6 rows) — **RLS fixed 2026-08-13**
+Used internally by the scheduled tasks to track sync cursors/state. Supabase's advisor previously flagged this table as fully exposed (readable/writable via the public API key by anyone) because RLS was off. This has been remediated: RLS is enabled and a `company_users_all_sync_state` policy (`FOR ALL`, `USING (is_company_user())`, `WITH CHECK (is_company_user())`) is live, matching the pattern used by every other table. Confirmed via a live advisor scan and a direct `pg_policies` check on 2026-08-13 — zero `rls_disabled_in_public` findings remain.
 
 ### Data import
 All historical data (7 customers, 6 original tasks, 5 blockers, 11 spotlight rows, 113 updates) was migrated from an uploaded spreadsheet (`Project Dashboard.xlsx`, itself originally built via Claude Projects). Row counts were verified to match the source exactly at import time.
@@ -229,7 +226,7 @@ $$;
 This hook is wired up manually via **Supabase Dashboard → Authentication → Hooks → "Before User Created"** — there is no API/connector tool for this step, it was done by Nick in the dashboard UI. Grants: `execute` granted to `supabase_auth_admin`, revoked from `authenticated, anon, public`.
 
 ### RLS policies (confirmed live, one per table, all identical pattern)
-`customers`, `tasks`, `blockers`, `updates`, `spotlight`, `status_drafts`, `notes` each have a single policy `company_users_all_<table>`, `FOR ALL`, `USING (is_company_user())`, `WITH CHECK (is_company_user())`. `allowed_users` has RLS enabled with no policies (fully locked). `sync_state` has RLS **disabled** — see section 4, not yet fixed.
+`customers`, `tasks`, `blockers`, `updates`, `spotlight`, `status_drafts`, `notes`, and `sync_state` each have a single policy `company_users_all_<table>`, `FOR ALL`, `USING (is_company_user())`, `WITH CHECK (is_company_user())`. `allowed_users` has RLS enabled with no policies (fully locked). `sync_state`'s policy was added 2026-08-13 — see section 4.
 
 ### Cloudflare Access — added then removed
 Cloudflare Access (Zero Trust) was set up in front of the Pages site as an extra login layer, then deliberately removed. Reasoning: Access only protects the *frontend static site*, not the Supabase API itself — the publishable key is embedded in the public JS bundle regardless. Stacking Access on top created double-login friction (Nick called it "frustrating") without adding real protection, and worse, could create a false sense of security if RLS were ever loosened to allow the `anon` role (someone could bypass Access entirely by hitting the Supabase REST API directly, e.g. with curl). **RLS tied to an authenticated JWT is the actual security boundary here — this reasoning should hold if access requirements are revisited later.**
@@ -319,7 +316,6 @@ Styling: `App.css` is a full CSS-variable-based design system (`--bg, --surface,
 
 ## 9. Known open items / not yet verified
 
-- **`sync_state` table has RLS disabled** — flagged by Supabase's advisor as fully exposed via the public API key. Not remediated; needs a policy decision (see section 4).
 - **`updates` tab / table feels like "a junk area"** (Nick's words) — a flat, ever-growing log fed by `slack-sync` for anything that isn't a clean status directive or auto-closeable task/blocker. The Review-tab diff/suggestion work addressed the *status* side of the daily-touchpoint complaint; this separate feed hasn't been tightened yet. Worth a follow-up pass if it keeps growing unchecked.
 - **Confirm `daily-status-drafts` produces sensible output** with the new diff/suggestion fields after a few more live runs — worth periodically sanity-checking the `suggested_action` notes and owner classification in the Review tab.
 - **Pre-approve tool access** on both scheduled tasks via "Run now" if not already done (see section 6).
