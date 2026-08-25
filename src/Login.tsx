@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Bird } from 'lucide-react'
 import { supabase, COMPANY_DOMAIN } from './supabaseClient'
 
 export default function Login() {
@@ -30,7 +31,7 @@ export default function Login() {
   return (
     <div className="login-screen">
       <div className="login-card">
-        <div className="login-mark">K</div>
+        <div className="login-mark"><Bird size={20} /></div>
         <h1>Kestrel</h1>
         <p className="subtitle">Sign in with your {COMPANY_DOMAIN} email</p>
 

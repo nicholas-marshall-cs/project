@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
-import { LayoutDashboard, Building2, CheckSquare, AlertTriangle, Activity, Clock, ChevronRight, ChevronDown, ClipboardCheck, Pencil, Trash2, ShieldCheck, AlertCircle, Sun, Moon, StickyNote, Lightbulb, Equal, ArrowRight, Check, X, Ban, RotateCcw, UserX, Search, Download, TrendingUp } from 'lucide-react'
+import { LayoutDashboard, Building2, CheckSquare, AlertTriangle, Activity, Clock, ChevronRight, ChevronDown, ClipboardCheck, Pencil, Trash2, ShieldCheck, AlertCircle, Sun, Moon, StickyNote, Lightbulb, Equal, ArrowRight, Check, X, Ban, RotateCcw, UserX, Search, Download, TrendingUp, Bird } from 'lucide-react'
 import { supabase } from './supabaseClient'
 import type { Customer, Task, Blocker, UpdateRow, Spotlight, Milestone, StatusDraft, StatusDraftSuggestion, Role, AllowedUser, DashboardUser, Note } from './types'
 
@@ -678,7 +678,7 @@ export default function Dashboard({ session }: { session: Session }) {
     <div className="app-shell">
       <aside className="sidebar">
         <div className="sidebar-brand">
-          <div className="sidebar-mark" />
+          <div className="sidebar-mark"><Bird size={16} /></div>
           <span>Kestrel</span>
         </div>
         <nav className="sidebar-nav">

@@ -56,7 +56,7 @@ body {
   flex-direction: column;
 }
 .sidebar-brand { display: flex; align-items: center; gap: 0.6rem; padding: 0.4rem 0.5rem 1.4rem; }
-.sidebar-mark { width: 28px; height: 28px; border-radius: 8px; background: var(--accent); flex-shrink: 0; }
+.sidebar-mark { width: 28px; height: 28px; border-radius: 8px; background: var(--accent); flex-shrink: 0; display: flex; align-items: center; justify-content: center; color: white; font-weight: 700; font-size: 0.8rem; }
 .sidebar-brand span { font-weight: 700; font-size: 0.95rem; letter-spacing: -0.01em; }
 .sidebar-nav { display: flex; flex-direction: column; gap: 0.15rem; flex: 1; }
 .sidebar-link {
