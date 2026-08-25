@@ -30,8 +30,8 @@ export default function Login() {
   return (
     <div className="login-screen">
       <div className="login-card">
-        <div className="login-mark">P</div>
-        <h1>Project Dashboard</h1>
+        <div className="login-mark">K</div>
+        <h1>Kestrel</h1>
         <p className="subtitle">Sign in with your {COMPANY_DOMAIN} email</p>
 
         {sent ? (

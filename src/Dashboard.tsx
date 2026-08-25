@@ -593,17 +593,17 @@ export default function Dashboard({ session }: { session: Session }) {
         openT, openB, c.go_live ?? '', needsAttention(c) ? 'Yes' : 'No', needsAttentionReasons(c).join('; '),
       ]
     })
-    downloadCsv(`compass-health-report-${todayStamp()}.csv`, [header, ...rows])
+    downloadCsv(`kestrel-health-report-${todayStamp()}.csv`, [header, ...rows])
   }
   function exportTasksCsv() {
     const header = ['Customer', 'Title', 'Status', 'Owner', 'Created', 'Updated']
     const rows = filteredTasks.map((t) => [customerName(t.customer_id), t.title, t.status, t.owner ?? '', t.created_at, t.updated_at])
-    downloadCsv(`compass-tasks-${todayStamp()}.csv`, [header, ...rows])
+    downloadCsv(`kestrel-tasks-${todayStamp()}.csv`, [header, ...rows])
   }
   function exportBlockersCsv() {
     const header = ['Customer', 'Title', 'Type', 'Detail', 'Opened', 'Resolved', 'Age (days)']
     const rows = sortedFilteredBlockers.map((b) => [customerName(b.customer_id), b.title, b.type ?? '', b.detail ?? '', b.created_at, b.resolved_at ?? 'Open', blockerAgeDays(b)])
-    downloadCsv(`compass-blockers-${todayStamp()}.csv`, [header, ...rows])
+    downloadCsv(`kestrel-blockers-${todayStamp()}.csv`, [header, ...rows])
   }
 
   // Global search — live client-side search across everything already loaded
@@ -679,7 +679,7 @@ export default function Dashboard({ session }: { session: Session }) {
       <aside className="sidebar">
         <div className="sidebar-brand">
           <div className="sidebar-mark" />
-          <span>Compass</span>
+          <span>Kestrel</span>
         </div>
         <nav className="sidebar-nav">
           {visibleNav.map(({ key, label, icon: Icon }) => (
