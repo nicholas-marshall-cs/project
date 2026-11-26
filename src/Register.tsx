@@ -1,15 +1,17 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
-import { Bird, Check, ClipboardCopy, ExternalLink, Inbox, ListTodo, Pencil, Search, Sun, Moon, Trash2, Undo2, Users, Layers, CheckCheck, AlertTriangle } from 'lucide-react'
+import { Bird, FolderKanban, Check, ClipboardCopy, ExternalLink, Inbox, ListTodo, Pencil, Search, Sun, Moon, Trash2, Undo2, Users, Layers, CheckCheck, AlertTriangle } from 'lucide-react'
 import { supabase } from './supabaseClient'
-import type { Customer, Item, ItemLink, Person, Priority, ItemStatus, SweepRun } from './types'
+import type { Customer, Item, ItemLink, Person, Priority, ItemStatus, SweepRun, Spotlight, Note } from './types'
+import { ProjectsGrid, ProjectPage, type StageGate } from './Projects'
 
-type View = 'mine' | 'chase' | 'inbox' | 'all' | 'done'
+type View = 'mine' | 'chase' | 'inbox' | 'projects' | 'all' | 'done'
 
 const VIEWS: { key: View; label: string; icon: typeof ListTodo; hint: string }[] = [
   { key: 'mine', label: 'My list', icon: ListTodo, hint: 'Things you own, ranked: P1 before P2 before P3, then project rank, then due date.' },
   { key: 'chase', label: 'Chase list', icon: Users, hint: 'Everything waiting on someone else, grouped by who, oldest first.' },
   { key: 'inbox', label: 'Inbox', icon: Inbox, hint: 'New items from the sweep (and migrated rows). Accept to track, bin to drop.' },
+  { key: 'projects', label: 'Projects', icon: FolderKanban, hint: 'Every project: gates, status, and who has the ball, worked out from its items.' },
   { key: 'all', label: 'All open', icon: Layers, hint: 'Every accepted open item, whoever owns it.' },
   { key: 'done', label: 'Done (14d)', icon: CheckCheck, hint: 'Closed in the last 14 days. Undo if it was closed by mistake.' },
 ]
@@ -23,6 +25,10 @@ export default function Register({ session }: { session: Session }) {
   const [customers, setCustomers] = useState<Customer[]>([])
   const [links, setLinks] = useState<ItemLink[]>([])
   const [lastRun, setLastRun] = useState<SweepRun | null>(null)
+  const [spotlight, setSpotlight] = useState<Spotlight[]>([])
+  const [notes, setNotes] = useState<Note[]>([])
+  const [gates, setGates] = useState<StageGate[]>([])
+  const [projectId, setProjectId] = useState<string | null>(null)
   const [role, setRole] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
@@ -41,15 +47,18 @@ export default function Register({ session }: { session: Session }) {
     setLoading(true)
     setErrorMsg(null)
     const since = new Date(Date.now() - 14 * 86400000).toISOString()
-    const [i, p, c, l, r, me] = await Promise.all([
+    const [i, p, c, l, r, me, sp, nt, sg] = await Promise.all([
       supabase.from('items').select('*').or(`status.in.(open,waiting),closed_at.gte.${since}`).neq('triage', 'binned'),
       supabase.from('people').select('*').eq('active', true).order('name'),
       supabase.from('customers').select('*').order('name'),
       supabase.from('item_links').select('*'),
       supabase.from('sweep_runs').select('*').order('started_at', { ascending: false }).limit(1),
       supabase.rpc('my_role'),
+      supabase.from('spotlight').select('*').order('created_at', { ascending: false }),
+      supabase.from('notes').select('*').order('created_at', { ascending: false }),
+      supabase.from('stage_gates').select('*').order('stage_order'),
     ])
-    const err = i.error || p.error || c.error || l.error || r.error
+    const err = i.error || p.error || c.error || l.error || r.error || sp.error || nt.error || sg.error
     if (err) setErrorMsg(err.message)
     else {
       setItems(i.data as Item[])
@@ -57,6 +66,9 @@ export default function Register({ session }: { session: Session }) {
       setCustomers(c.data as Customer[])
       setLinks(l.data as ItemLink[])
       setLastRun(((r.data as SweepRun[]) ?? [])[0] ?? null)
+      setSpotlight(sp.data as Spotlight[])
+      setNotes(nt.data as Note[])
+      setGates(sg.data as StageGate[])
     }
     if (!me.error) setRole((me.data as string) ?? 'viewer')
     setLoading(false)
@@ -100,6 +112,24 @@ export default function Register({ session }: { session: Session }) {
     if (error) setErrorMsg(error.message); else loadAll()
   }
 
+  async function patchCustomer(id: string, change: Partial<Customer>) {
+    setCustomers((prev) => prev.map((c) => (c.id === id ? { ...c, ...change } : c)))
+    const { error } = await supabase.from('customers').update(change).eq('id', id)
+    if (error) { setErrorMsg(error.message); loadAll() }
+  }
+  async function addStatus(customerId: string, owner: string, text: string) {
+    const { error } = await supabase.from('spotlight').insert({ customer_id: customerId, owner, text })
+    if (error) setErrorMsg(error.message); else loadAll()
+  }
+  async function addNote(customerId: string, text: string) {
+    const { error } = await supabase.from('notes').insert({ customer_id: customerId, text, author: session.user.email })
+    if (error) setErrorMsg(error.message); else loadAll()
+  }
+  async function addProjectItem(customerId: string, title: string) {
+    const { error } = await supabase.from('items').insert({ title, customer_id: customerId, owner_id: me?.id ?? null, status: 'open', triage: 'accepted', origin: 'manual' })
+    if (error) setErrorMsg(error.message); else loadAll()
+  }
+
   // ---------- derived lists ----------
   const matches = (it: Item) => {
     if (customerFilter !== 'all' && it.customer_id !== customerFilter) return false
@@ -135,6 +165,7 @@ export default function Register({ session }: { session: Session }) {
     mine: mine.length,
     chase: chaseGroups.reduce((n, g) => n + g.list.length, 0),
     inbox: inbox.length,
+    projects: customers.filter((c) => c.active !== false && items.some((i) => i.customer_id === c.id && OPEN.includes(i.status) && i.triage === 'accepted')).length,
     all: openAccepted.length,
     done: done.length,
   }
@@ -171,7 +202,7 @@ export default function Register({ session }: { session: Session }) {
         </div>
         <nav className="sidebar-nav">
           {VIEWS.map(({ key, label, icon: Icon }) => (
-            <button key={key} className={view === key ? 'sidebar-link active' : 'sidebar-link'} onClick={() => setView(key)}>
+            <button key={key} className={view === key ? 'sidebar-link active' : 'sidebar-link'} onClick={() => { setView(key); setProjectId(null) }}>
               <Icon size={16} />
               {label}
               {key === 'inbox' && counts.inbox > 0 ? <span className="nav-badge">{counts.inbox}</span> : <span className="nav-count">{counts[key]}</span>}
@@ -217,6 +248,23 @@ export default function Register({ session }: { session: Session }) {
             )}
 
             {view === 'mine' && <ItemList items={mine} empty="Nothing on your list. Enjoy it." numbered {...rowProps} />}
+            {view === 'projects' && (() => {
+              const ctx = { customers, items, people, spotlight, notes, gates, meId: me?.id }
+              return projectId ? (
+                <ProjectPage
+                  ctx={ctx}
+                  customerId={projectId}
+                  onBack={() => setProjectId(null)}
+                  renderItems={(list, o) => <ItemList items={list} empty="" showOwner={o?.showOwner} hideWaiting={o?.hideWaiting} {...rowProps} />}
+                  onPatchCustomer={patchCustomer}
+                  onAddStatus={addStatus}
+                  onAddNote={addNote}
+                  onAddItem={addProjectItem}
+                />
+              ) : (
+                <ProjectsGrid ctx={ctx} onOpen={setProjectId} filter={(c) => customerFilter === 'all' || c.id === customerFilter} />
+              )
+            })()}
             {view === 'all' && <ItemList items={[...openAccepted].sort(rankSort)} empty="No open items." showOwner {...rowProps} />}
             {view === 'inbox' && <ItemList items={inbox} empty="Inbox zero." inbox showOwner {...rowProps} />}
             {view === 'done' && <ItemList items={done} empty="Nothing closed in the last 14 days." showOwner {...rowProps} />}
