@@ -26,6 +26,10 @@ export interface Customer {
   // Keys from the fixed STAGES list (e.g. "mo_conclusion") that this customer has
   // opted to hide — the stage's stored date/value is untouched, it's just not shown.
   hidden_stages: string[]
+  slack_channel_id?: string | null
+  slack_channel_name?: string | null
+  active?: boolean
+  project_rank?: number | null
   created_at: string
 }
 
@@ -136,4 +140,65 @@ export interface DashboardUser {
   account_created_at: string
   role: Role | null
   blocked: boolean
+}
+
+// ---------- Chase register (repurpose, Nov 2026) ----------
+export type Priority = 'P1' | 'P2' | 'P3'
+export type ItemStatus = 'open' | 'waiting' | 'done' | 'dropped'
+export type Triage = 'inbox' | 'accepted' | 'binned'
+
+export interface Person {
+  id: string
+  name: string
+  kind: 'internal' | 'customer' | 'vendor' | 'partner'
+  customer_id: string | null
+  slack_user_id: string | null
+  email: string | null
+  aliases: string[]
+  is_me: boolean
+  active: boolean
+}
+
+export interface Item {
+  id: string
+  title: string
+  customer_id: string | null
+  owner_id: string | null
+  waiting_on_id: string | null
+  priority: Priority
+  rank: number | null
+  due: string | null
+  jira_key: string | null
+  is_engineering: boolean
+  status: ItemStatus
+  triage: Triage
+  confidence: 'high' | 'medium' | 'low' | null
+  notes: string | null
+  origin: 'manual' | 'sweep' | 'migrated'
+  last_seen_at: string
+  closed_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ItemLink {
+  id: string
+  item_id: string
+  kind: 'slack' | 'email' | 'zoom_meeting' | 'zoom_chat' | 'jira' | 'zendesk' | 'calendar' | 'manual'
+  url: string | null
+  external_ref: string | null
+  excerpt: string | null
+  seen_at: string
+}
+
+export interface SweepRun {
+  id: string
+  started_at: string
+  finished_at: string | null
+  run_kind: 'morning' | 'midday' | 'manual'
+  source_health: Record<string, string>
+  items_created: number
+  items_updated: number
+  items_closed: number
+  summary: string | null
 }
