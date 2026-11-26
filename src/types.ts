@@ -100,8 +100,8 @@ export interface StatusDraftSuggestion {
   customer_id: string
   // 'create' = propose a brand new task/milestone/blocker (action is the
   // title/label). 'close' = propose closing/completing an EXISTING task
-  // (target_id) or milestone (target_key), action is then just a human-readable
-  // label of what's being closed.
+  // (target_id), milestone (target_key) or blocker (target_blocker_id), action
+  // is then just a human-readable label of what's being closed.
   kind: 'create' | 'close'
   type: 'task' | 'milestone' | 'blocker'
   action: string
@@ -110,6 +110,9 @@ export interface StatusDraftSuggestion {
   // For kind = 'close' + type = 'milestone': the milestone's key within
   // customers.milestones to mark completed.
   target_key: string | null
+  // For kind = 'close' + type = 'blocker': the blockers.id to resolve
+  // (sets blockers.resolved_at).
+  target_blocker_id: string | null
   // For kind = 'create' + type = 'blocker': the blockers.type to use when
   // inserting (e.g. "Waiting on Customer", "Internal").
   blocker_type: string | null

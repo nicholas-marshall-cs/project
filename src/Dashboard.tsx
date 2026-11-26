@@ -226,7 +226,8 @@ export default function Dashboard({ session }: { session: Session }) {
   // status_draft_suggestions), each actioned independently here.
   //
   // kind = 'create' -> insert a new task/milestone/blocker.
-  // kind = 'close'  -> mark an EXISTING task Done or milestone completed.
+  // kind = 'close'  -> mark an EXISTING task Done, milestone completed, or
+  //                    blocker resolved.
   async function applySuggestion(suggestion: StatusDraftSuggestion) {
     if (suggestion.kind === 'close') {
       if (suggestion.type === 'task') {
@@ -241,8 +242,15 @@ export default function Dashboard({ session }: { session: Session }) {
         const { error } = await supabase.from('customers').update({ milestones: updated }).eq('id', customer.id)
         if (error) { setErrorMsg(error.message); return }
       } else {
-        setErrorMsg('Blockers cannot be closed via a suggestion — resolve them directly in the Blockers tab.')
-        return
+        if (!suggestion.target_blocker_id) { setErrorMsg('This close suggestion is missing its target blocker.'); return }
+        // Only stamp resolved_at if it is still open, so re-applying never
+        // overwrites the original resolution time.
+        const { error } = await supabase
+          .from('blockers')
+          .update({ resolved_at: new Date().toISOString() })
+          .eq('id', suggestion.target_blocker_id)
+          .is('resolved_at', null)
+        if (error) { setErrorMsg(error.message); return }
       }
     } else {
       if (suggestion.type === 'task') {
@@ -861,12 +869,14 @@ export default function Dashboard({ session }: { session: Session }) {
                         key={d.id}
                         draft={d}
                         suggestions={suggestions.filter((s) => s.draft_id === d.id)}
+                        openBlockers={blockers.filter((b) => b.customer_id === d.customer_id && !b.resolved_at)}
                         customerName={customerName(d.customer_id)}
                         canEdit={canEdit}
                         onApprove={approveDraft}
                         onDismiss={dismissDraft}
                         onApplySuggestion={applySuggestion}
                         onDismissSuggestion={dismissSuggestion}
+                        onResolveBlocker={toggleBlockerResolved}
                       />
                     ))}
                   </div>
@@ -1555,6 +1565,8 @@ function DraftCard({
   onDismiss,
   onApplySuggestion,
   onDismissSuggestion,
+  openBlockers,
+  onResolveBlocker,
 }: {
   draft: StatusDraft
   suggestions: StatusDraftSuggestion[]
@@ -1564,7 +1576,19 @@ function DraftCard({
   onDismiss: (draft: StatusDraft) => void
   onApplySuggestion: (suggestion: StatusDraftSuggestion) => void
   onDismissSuggestion: (suggestion: StatusDraftSuggestion) => void
+  // This customer's open blockers, so any of them can be resolved straight
+  // from the Review card even when no close suggestion was generated for it.
+  openBlockers: Blocker[]
+  onResolveBlocker: (blocker: Blocker) => void
 }) {
+  // Blockers already targeted by a pending close suggestion are shown there,
+  // so leave them out of the manual list to avoid two buttons for one blocker.
+  const suggestedBlockerIds = new Set(
+    suggestions
+      .filter((s) => s.status === 'pending' && s.kind === 'close' && s.type === 'blocker' && s.target_blocker_id)
+      .map((s) => s.target_blocker_id as string),
+  )
+  const manualBlockers = openBlockers.filter((b) => !suggestedBlockerIds.has(b.id))
   const [text, setText] = useState(draft.proposed_text)
   const [owner, setOwner] = useState(draft.proposed_owner)
 
@@ -1609,6 +1633,23 @@ function DraftCard({
         <SuggestionBlock key={s.id} suggestion={s} canEdit={canEdit} onApply={onApplySuggestion} onDismiss={onDismissSuggestion} />
       ))}
 
+      {manualBlockers.length > 0 && (
+        <div className="draft-open-blockers">
+          <div className="draft-open-blockers-label">Open blockers ({manualBlockers.length})</div>
+          {manualBlockers.map((b) => (
+            <div key={b.id} className="draft-open-blocker">
+              <span className="draft-open-blocker-title">
+                {b.title}
+                <span className="muted"> · {b.type ?? 'Unclassified'} · open {Math.max(0, Math.floor((Date.now() - new Date(b.created_at).getTime()) / 86400000))}d</span>
+              </span>
+              {canEdit && (
+                <button className="suggestion-dismiss-btn" onClick={() => onResolveBlocker(b)}>Resolve</button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="draft-edit-row">
         <select value={owner} disabled={!canEdit} onChange={(e) => setOwner(e.target.value as StatusDraft['proposed_owner'])}>
           <option value="Us">With us</option>
@@ -1643,12 +1684,13 @@ function SuggestionBlock({
   onDismiss: (suggestion: StatusDraftSuggestion) => void
 }) {
   const isClose = suggestion.kind === 'close'
+  const isBlocker = suggestion.type === 'blocker'
   const typeLabel = suggestion.type
   const applyLabel = isClose
-    ? `Mark ${typeLabel} done`
+    ? (isBlocker ? 'Resolve blocker' : `Mark ${typeLabel} done`)
     : `Add as ${typeLabel}`
   const appliedLabel = isClose
-    ? `Closed ${typeLabel}: ${suggestion.action}`
+    ? `${isBlocker ? 'Resolved' : 'Closed'} ${typeLabel}: ${suggestion.action}`
     : `Added as ${typeLabel}: ${suggestion.action}`
 
   if (suggestion.status === 'applied') {
@@ -1672,7 +1714,7 @@ function SuggestionBlock({
     <div className={isClose ? 'draft-suggestion draft-suggestion-close' : 'draft-suggestion'}>
       {isClose ? <Check size={13} /> : <Lightbulb size={13} />}
       <div className="draft-suggestion-body">
-        <span>{isClose ? `Looks done: ${suggestion.action}` : suggestion.action}</span>
+        <span>{isClose ? `${isBlocker ? 'Looks resolved' : 'Looks done'}: ${suggestion.action}` : suggestion.action}</span>
         {canEdit && (
           <div className="draft-suggestion-actions">
             <button className="suggestion-apply-btn" onClick={() => onApply(suggestion)}>
